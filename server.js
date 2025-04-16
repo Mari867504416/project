@@ -41,7 +41,12 @@ const Officer = mongoose.model('Officer', new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   subscribed: { type: Boolean, default: false },
-  transactionId: { type: String, default: '' },
+  transactionId: { 
+    type: String, 
+    default: '',
+    unique: true // Prevent duplicate transactions
+  },
+  subscriptionDate: { type: Date },
   createdAt: { type: Date, default: Date.now }
 }));
 
@@ -93,9 +98,13 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
+    // Return officer data (excluding password)
+    const officerData = officer.toObject();
+    delete officerData.password;
+    
     res.json({ 
       message: 'Login successful',
-      subscribed: officer.subscribed
+      officer: officerData
     });
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
@@ -106,6 +115,11 @@ app.post('/login', async (req, res) => {
 app.post('/signup', async (req, res) => {
   try {
     const { name, address, mobile, username, password } = req.body;
+    
+    // Validate mobile number
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({ error: 'Invalid mobile number' });
+    }
     
     // Check if username or mobile already exists
     const existingOfficer = await Officer.findOne({ $or: [{ username }, { mobile }] });
@@ -122,7 +136,14 @@ app.post('/signup', async (req, res) => {
       password: hashedPassword
     });
     
-    res.json({ message: 'Officer created successfully' });
+    // Return officer data without password
+    const officerData = newOfficer.toObject();
+    delete officerData.password;
+    
+    res.json({ 
+      message: 'Officer created successfully',
+      officer: officerData
+    });
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -133,16 +154,16 @@ app.post('/submit-transaction', async (req, res) => {
   try {
     const { transactionId, username } = req.body;
     
-    // Basic validation
+    // Validate input
     if (!transactionId || !username) {
       return res.status(400).json({ error: 'Transaction ID and username are required' });
     }
-
-    // Check if transaction ID is valid format (example: alphanumeric 8-12 chars)
+    
+    // Validate transaction ID format (alphanumeric, 8-12 characters)
     if (!/^[a-zA-Z0-9]{8,12}$/.test(transactionId)) {
-      return res.status(400).json({ error: 'Invalid transaction ID format' });
+      return res.status(400).json({ error: 'Transaction ID must be 8-12 alphanumeric characters' });
     }
-
+    
     // Find officer and update
     const officer = await Officer.findOneAndUpdate(
       { username },
@@ -152,23 +173,28 @@ app.post('/submit-transaction', async (req, res) => {
       },
       { new: true }
     );
-
+    
     if (!officer) {
       return res.status(404).json({ error: 'Officer not found' });
     }
-
+    
+    // Return officer data without password
+    const officerData = officer.toObject();
+    delete officerData.password;
+    
     res.json({ 
       message: 'Transaction submitted for verification',
-      transactionId: officer.transactionId
+      officer: officerData
     });
-
+    
   } catch (error) {
-    if (error.code === 11000) { // MongoDB duplicate key error
-      return res.status(400).json({ error: 'This transaction ID was already used' });
+    if (error.code === 11000) { // Duplicate key error
+      return res.status(400).json({ error: 'This transaction ID is already in use' });
     }
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 // Admin - Get all officers
 app.get('/admin/officers', async (req, res) => {
   try {
@@ -184,42 +210,42 @@ app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId } = req.body;
     
-    // Verify transaction exists
+    // Find officer by transaction ID
     const officer = await Officer.findOne({ transactionId });
     if (!officer) {
-      return res.status(404).json({ message: 'Transaction not found' });
+      return res.status(404).json({ message: 'No officer found with this transaction ID' });
     }
-
-    // Check if already activated
+    
+    // Check if already subscribed
     if (officer.subscribed) {
-      return res.status(400).json({ message: 'Officer already subscribed' });
+      return res.status(400).json({ message: 'Officer is already subscribed' });
     }
-
-    // Update officer status
+    
+    // Update subscription status
     const updatedOfficer = await Officer.findOneAndUpdate(
       { transactionId },
       { 
         subscribed: true,
-        paymentVerified: true,
-        transactionId: '', // Clear after verification
+        transactionId: '', // Clear transaction ID after activation
         subscriptionDate: new Date() 
       },
       { new: true }
     );
-
+    
+    // Return updated officer data without password
+    const officerData = updatedOfficer.toObject();
+    delete officerData.password;
+    
     res.json({ 
       message: 'Subscription activated successfully',
-      officer: {
-        name: updatedOfficer.name,
-        username: updatedOfficer.username,
-        subscriptionDate: updatedOfficer.subscriptionDate
-      }
+      officer: officerData
     });
-
+    
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 // Admin - Reset password
 app.post('/admin/reset-password', async (req, res) => {
   try {
