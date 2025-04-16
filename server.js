@@ -167,16 +167,20 @@ app.post('/signup', async (req, res) => {
 });
 
 // Submit Transaction ID (12-digit only)
+const rateLimit = require('express-rate-limit');
+
+// Strict rate limiting for transaction submissions
 const transactionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5 // Limit to 5 attempts per window
+  max: 5, // Limit to 5 attempts per window
+  message: 'Too many transaction submissions, please try again later'
 });
 
 app.post('/submit-transaction', transactionLimiter, async (req, res) => {
   try {
     const { transactionId, username } = req.body;
     
-    // Validate input
+    // Validate presence
     if (!transactionId || !username) {
       return res.status(400).json({ error: 'Transaction ID and username are required' });
     }
@@ -186,34 +190,29 @@ app.post('/submit-transaction', transactionLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Transaction ID must be exactly 12 digits' });
     }
     
-    // Find officer and update
-    const officer = await Officer.findOneAndUpdate(
+    // Update officer record
+    const updatedOfficer = await Officer.findOneAndUpdate(
       { username },
       { 
         transactionId,
-        subscriptionDate: new Date() 
+        subscriptionDate: new Date(),
+        subscriptionStatus: 'pending' 
       },
       { new: true }
     );
     
-    if (!officer) {
+    if (!updatedOfficer) {
       return res.status(404).json({ error: 'Officer not found' });
     }
     
-    // Return officer data without password
-    const officerData = officer.toObject();
-    delete officerData.password;
-    
-    res.json({ 
-      message: 'Transaction submitted for verification',
-      officer: officerData
+    return res.json({ 
+      message: 'Transaction submitted successfully',
+      transactionId: updatedOfficer.transactionId
     });
     
   } catch (error) {
-    if (error.code === 11000) { // Duplicate key error
-      return res.status(400).json({ error: 'This transaction ID is already in use' });
-    }
-    res.status(500).json({ error: 'Server error' });
+    console.error('Transaction submission error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
