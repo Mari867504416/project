@@ -37,14 +37,31 @@ const Admin = mongoose.model('Admin', new mongoose.Schema({
 const Officer = mongoose.model('Officer', new mongoose.Schema({
   name: { type: String, required: true },
   address: { type: String, required: true },
-  mobile: { type: String, required: true, unique: true },
+  mobile: { 
+    type: String, 
+    required: true, 
+    unique: true,
+    validate: {
+      validator: function(v) {
+        return /^\d{10}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid 10-digit mobile number!`
+    }
+  },
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   subscribed: { type: Boolean, default: false },
   transactionId: { 
-    type: String, 
-    default: '',
-    unique: true // Prevent duplicate transactions
+    type: String,
+    validate: {
+      validator: function(v) {
+        // Only validate if there's a value and not empty string
+        return !v || /^\d{12}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid 12-digit transaction ID!`
+    },
+    unique: true,
+    sparse: true // Allows multiple null values but enforces uniqueness for non-null
   },
   subscriptionDate: { type: Date },
   createdAt: { type: Date, default: Date.now }
@@ -149,8 +166,13 @@ app.post('/signup', async (req, res) => {
   }
 });
 
-// Submit Transaction ID
-app.post('/submit-transaction', async (req, res) => {
+// Submit Transaction ID (12-digit only)
+const transactionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5 // Limit to 5 attempts per window
+});
+
+app.post('/submit-transaction', transactionLimiter, async (req, res) => {
   try {
     const { transactionId, username } = req.body;
     
@@ -159,9 +181,9 @@ app.post('/submit-transaction', async (req, res) => {
       return res.status(400).json({ error: 'Transaction ID and username are required' });
     }
     
-    // Validate transaction ID format (alphanumeric, 8-12 characters)
-    if (!/^[a-zA-Z0-9]{8,12}$/.test(transactionId)) {
-      return res.status(400).json({ error: 'Transaction ID must be 8-12 alphanumeric characters' });
+    // Strict 12-digit number validation
+    if (!/^\d{12}$/.test(transactionId)) {
+      return res.status(400).json({ error: 'Transaction ID must be exactly 12 digits' });
     }
     
     // Find officer and update
@@ -209,6 +231,11 @@ app.get('/admin/officers', async (req, res) => {
 app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId } = req.body;
+    
+    // Validate transaction ID format
+    if (!/^\d{12}$/.test(transactionId)) {
+      return res.status(400).json({ message: 'Invalid transaction ID format' });
+    }
     
     // Find officer by transaction ID
     const officer = await Officer.findOne({ transactionId });
