@@ -131,25 +131,44 @@ app.post('/signup', async (req, res) => {
 // Submit Transaction ID
 app.post('/submit-transaction', async (req, res) => {
   try {
-    const { transactionId } = req.body;
-    const { username } = req.query; // You might want to send username in headers or body
+    const { transactionId, username } = req.body;
     
+    // Basic validation
+    if (!transactionId || !username) {
+      return res.status(400).json({ error: 'Transaction ID and username are required' });
+    }
+
+    // Check if transaction ID is valid format (example: alphanumeric 8-12 chars)
+    if (!/^[a-zA-Z0-9]{8,12}$/.test(transactionId)) {
+      return res.status(400).json({ error: 'Invalid transaction ID format' });
+    }
+
+    // Find officer and update
     const officer = await Officer.findOneAndUpdate(
       { username },
-      { transactionId },
+      { 
+        transactionId,
+        subscriptionDate: new Date() 
+      },
       { new: true }
     );
-    
+
     if (!officer) {
       return res.status(404).json({ error: 'Officer not found' });
     }
-    
-    res.json({ message: 'Transaction ID submitted successfully' });
+
+    res.json({ 
+      message: 'Transaction submitted for verification',
+      transactionId: officer.transactionId
+    });
+
   } catch (error) {
+    if (error.code === 11000) { // MongoDB duplicate key error
+      return res.status(400).json({ error: 'This transaction ID was already used' });
+    }
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 // Admin - Get all officers
 app.get('/admin/officers', async (req, res) => {
   try {
@@ -165,22 +184,42 @@ app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId } = req.body;
     
-    const officer = await Officer.findOneAndUpdate(
+    // Verify transaction exists
+    const officer = await Officer.findOne({ transactionId });
+    if (!officer) {
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+
+    // Check if already activated
+    if (officer.subscribed) {
+      return res.status(400).json({ message: 'Officer already subscribed' });
+    }
+
+    // Update officer status
+    const updatedOfficer = await Officer.findOneAndUpdate(
       { transactionId },
-      { subscribed: true, transactionId: '' },
+      { 
+        subscribed: true,
+        paymentVerified: true,
+        transactionId: '', // Clear after verification
+        subscriptionDate: new Date() 
+      },
       { new: true }
     );
-    
-    if (!officer) {
-      return res.status(404).json({ message: 'No officer found with this transaction ID' });
-    }
-    
-    res.json({ message: 'Subscription activated successfully' });
+
+    res.json({ 
+      message: 'Subscription activated successfully',
+      officer: {
+        name: updatedOfficer.name,
+        username: updatedOfficer.username,
+        subscriptionDate: updatedOfficer.subscriptionDate
+      }
+    });
+
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 // Admin - Reset password
 app.post('/admin/reset-password', async (req, res) => {
   try {
