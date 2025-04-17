@@ -55,19 +55,18 @@ const Officer = mongoose.model('Officer', new mongoose.Schema({
     type: String,
     validate: {
       validator: function(v) {
-        // Only validate if there's a value and not empty string
         return !v || /^\d{12}$/.test(v);
       },
       message: props => `${props.value} is not a valid 12-digit transaction ID!`
     },
     unique: true,
-    sparse: true // Allows multiple null values but enforces uniqueness for non-null
+    sparse: true
   },
   subscriptionDate: { type: Date },
   createdAt: { type: Date, default: Date.now }
 }));
 
-// Initialize Admin (run once)
+// Initialize Admin
 async function initializeAdmin() {
   const adminExists = await Admin.exists({ username: 'admin' });
   if (!adminExists) {
@@ -115,13 +114,13 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Return officer data (excluding password)
     const officerData = officer.toObject();
     delete officerData.password;
     
     res.json({ 
       message: 'Login successful',
-      officer: officerData
+      officer: officerData,
+      subscribed: officer.subscribed
     });
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
@@ -133,12 +132,10 @@ app.post('/signup', async (req, res) => {
   try {
     const { name, address, mobile, username, password } = req.body;
     
-    // Validate mobile number
     if (!/^\d{10}$/.test(mobile)) {
       return res.status(400).json({ error: 'Invalid mobile number' });
     }
     
-    // Check if username or mobile already exists
     const existingOfficer = await Officer.findOne({ $or: [{ username }, { mobile }] });
     if (existingOfficer) {
       return res.status(400).json({ error: 'Username or mobile number already exists' });
@@ -153,7 +150,6 @@ app.post('/signup', async (req, res) => {
       password: hashedPassword
     });
     
-    // Return officer data without password
     const officerData = newOfficer.toObject();
     delete officerData.password;
     
@@ -166,13 +162,10 @@ app.post('/signup', async (req, res) => {
   }
 });
 
-// Submit Transaction ID (12-digit only)
-const rateLimit = require('express-rate-limit');
-
-// Strict rate limiting for transaction submissions
+// Submit Transaction ID
 const transactionLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit to 5 attempts per window
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   message: 'Too many transaction submissions, please try again later'
 });
 
@@ -180,23 +173,26 @@ app.post('/submit-transaction', transactionLimiter, async (req, res) => {
   try {
     const { transactionId, username } = req.body;
     
-    // Validate presence
     if (!transactionId || !username) {
       return res.status(400).json({ error: 'Transaction ID and username are required' });
     }
     
-    // Strict 12-digit number validation
     if (!/^\d{12}$/.test(transactionId)) {
       return res.status(400).json({ error: 'Transaction ID must be exactly 12 digits' });
     }
     
-    // Update officer record
+    // Check if transaction ID already exists
+    const existingTransaction = await Officer.findOne({ transactionId });
+    if (existingTransaction) {
+      return res.status(400).json({ error: 'This transaction ID has already been used' });
+    }
+    
     const updatedOfficer = await Officer.findOneAndUpdate(
       { username },
       { 
         transactionId,
         subscriptionDate: new Date(),
-        subscriptionStatus: 'pending' 
+        subscribed: false // Ensure subscribed is false until admin activates
       },
       { new: true }
     );
@@ -205,21 +201,22 @@ app.post('/submit-transaction', transactionLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Officer not found' });
     }
     
-    return res.json({ 
+    res.json({ 
       message: 'Transaction submitted successfully',
       transactionId: updatedOfficer.transactionId
     });
     
   } catch (error) {
     console.error('Transaction submission error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Admin - Get all officers
 app.get('/admin/officers', async (req, res) => {
   try {
-    const officers = await Officer.find({}, { password: 0 });
+    const officers = await Officer.find({}, { password: 0 })
+      .sort({ createdAt: -1 }); // Sort by newest first
     res.json(officers);
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
@@ -231,34 +228,29 @@ app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId } = req.body;
     
-    // Validate transaction ID format
     if (!/^\d{12}$/.test(transactionId)) {
-      return res.status(400).json({ message: 'Invalid transaction ID format' });
+      return res.status(400).json({ error: 'Invalid transaction ID format' });
     }
     
-    // Find officer by transaction ID
     const officer = await Officer.findOne({ transactionId });
     if (!officer) {
-      return res.status(404).json({ message: 'No officer found with this transaction ID' });
+      return res.status(404).json({ error: 'No officer found with this transaction ID' });
     }
     
-    // Check if already subscribed
     if (officer.subscribed) {
-      return res.status(400).json({ message: 'Officer is already subscribed' });
+      return res.status(400).json({ error: 'Officer is already subscribed' });
     }
     
-    // Update subscription status
     const updatedOfficer = await Officer.findOneAndUpdate(
       { transactionId },
       { 
         subscribed: true,
-        transactionId: '', // Clear transaction ID after activation
+        transactionId: null, // Clear transaction ID
         subscriptionDate: new Date() 
       },
       { new: true }
     );
     
-    // Return updated officer data without password
     const officerData = updatedOfficer.toObject();
     delete officerData.password;
     
