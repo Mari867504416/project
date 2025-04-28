@@ -289,28 +289,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-// Officer - Check Activation Status
-app.post('/officer/status', async (req, res) => {
-  try {
-    const { username } = req.body;
-
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-
-    const officer = await Officer.findOne({ username });
-
-    if (!officer) {
-      return res.status(404).json({ error: 'Officer not found' });
-    }
-
-    res.json({ 
-      activated: officer.subscribed // true or false
-    });
-    
-  } catch (error) {
-    console.error('Error checking activation status:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
