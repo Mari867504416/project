@@ -227,9 +227,9 @@ app.get('/admin/officers', async (req, res) => {
 app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId, username } = req.body;
+    console.log('Activation request:', req.body);
 
     let officer;
-
     if (transactionId) {
       if (!/^\d{12}$/.test(transactionId)) {
         return res.status(400).json({ error: 'Invalid transaction ID format' });
@@ -240,6 +240,8 @@ app.post('/admin/activate', async (req, res) => {
     } else {
       return res.status(400).json({ error: 'Provide either transactionId or username' });
     }
+
+    console.log('Found officer:', officer);
 
     if (!officer) {
       return res.status(404).json({ error: 'Officer not found' });
@@ -271,6 +273,7 @@ app.post('/admin/activate', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 // Admin - Reset password
 app.post('/admin/reset-password', async (req, res) => {
   try {
