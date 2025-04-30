@@ -224,45 +224,61 @@ app.get('/admin/officers', async (req, res) => {
 });
 
 // Admin - Activate subscription
+// Admin - Activate subscription
 app.post('/admin/activate', async (req, res) => {
   try {
-    const { transactionId } = req.body;
-    
-    if (!/^\d{12}$/.test(transactionId)) {
-      return res.status(400).json({ error: 'Invalid transaction ID format' });
+    const { transactionId, username } = req.body;
+
+    let officer;
+
+    // Case 1: Activate using transactionId
+    if (transactionId) {
+      if (!/^\d{12}$/.test(transactionId)) {
+        return res.status(400).json({ error: 'Invalid transaction ID format' });
+      }
+
+      officer = await Officer.findOne({ transactionId });
+      if (!officer) {
+        return res.status(404).json({ error: 'No officer found with this transaction ID' });
+      }
     }
-    
-    const officer = await Officer.findOne({ transactionId });
-    if (!officer) {
-      return res.status(404).json({ error: 'No officer found with this transaction ID' });
+
+    // Case 2: Activate using username
+    else if (username) {
+      officer = await Officer.findOne({ username });
+      if (!officer) {
+        return res.status(404).json({ error: 'No officer found with this username' });
+      }
     }
-    
+
+    else {
+      return res.status(400).json({ error: 'Provide either transactionId or username' });
+    }
+
     if (officer.subscribed) {
       return res.status(400).json({ error: 'Officer is already subscribed' });
     }
-    
-    const updatedOfficer = await Officer.findOneAndUpdate(
-      { transactionId },
-      { 
-        subscribed: true,
-        transactionId: null, // Clear transaction ID
-        subscriptionDate: new Date() 
-      },
-      { new: true }
-    );
-    
-    const officerData = updatedOfficer.toObject();
+
+    officer.subscribed = true;
+    officer.transactionId = null; // clear after activation
+    officer.subscriptionDate = new Date();
+
+    await officer.save();
+
+    const officerData = officer.toObject();
     delete officerData.password;
-    
-    res.json({ 
+
+    res.json({
       message: 'Subscription activated successfully',
       officer: officerData
     });
-    
+
   } catch (error) {
+    console.error('Activation error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 // Admin - Reset password
 app.post('/admin/reset-password', async (req, res) => {
