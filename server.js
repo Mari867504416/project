@@ -226,50 +226,40 @@ app.get('/admin/officers', async (req, res) => {
 // Admin - Activate subscription
 app.post('/admin/activate', async (req, res) => {
   try {
-    const { transactionId, username } = req.body;
-    console.log('Activation request:', req.body);
-
-    let officer;
-    if (transactionId) {
-      if (!/^\d{12}$/.test(transactionId)) {
-        return res.status(400).json({ error: 'Invalid transaction ID format' });
-      }
-      officer = await Officer.findOne({ transactionId });
-    } else if (username) {
-      officer = await Officer.findOne({ username });
-    } else {
-      return res.status(400).json({ error: 'Provide either transactionId or username' });
+    const { transactionId } = req.body;
+    
+    if (!/^\d{12}$/.test(transactionId)) {
+      return res.status(400).json({ error: 'Invalid transaction ID format' });
     }
-
-    console.log('Found officer:', officer);
-
+    
+    const officer = await Officer.findOne({ transactionId });
     if (!officer) {
-      return res.status(404).json({ error: 'Officer not found' });
+      return res.status(404).json({ error: 'No officer found with this transaction ID' });
     }
-
+    
     if (officer.subscribed) {
       return res.status(400).json({ error: 'Officer is already subscribed' });
     }
-
+    
     const updatedOfficer = await Officer.findOneAndUpdate(
-      { _id: officer._id },
-      {
+      { transactionId },
+      { 
         subscribed: true,
-        transactionId: null,
-        subscriptionDate: new Date()
+        transactionId: null, // Clear transaction ID
+        subscriptionDate: new Date() 
       },
       { new: true }
     );
-
+    
     const officerData = updatedOfficer.toObject();
     delete officerData.password;
-
-    res.json({
+    
+    res.json({ 
       message: 'Subscription activated successfully',
       officer: officerData
     });
+    
   } catch (error) {
-    console.error('Activation error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
