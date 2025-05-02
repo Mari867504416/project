@@ -224,60 +224,37 @@ app.get('/admin/officers', async (req, res) => {
 });
 
 // Admin - Activate subscription
-// Admin - Activate subscription
 app.post('/admin/activate', async (req, res) => {
   try {
-    const { transactionId, username } = req.body;
-    console.log("Received activation request:", { transactionId, username });
+    const { transactionId } = req.body;
 
-    let officer;
+    // Validate input
+    if (!transactionId || !/^\d{12}$/.test(transactionId)) {
+      return res.status(400).json({ error: 'Invalid or missing 12-digit transaction ID' });
+    }
 
-    if (transactionId) {
-      if (!/^\d{12}$/.test(transactionId)) {
-        return res.status(400).json({ error: 'Invalid transaction ID format (must be 12 digits)' });
-      }
+    // Find the officer by transactionId
+    const officer = await Officer.findOne({ transactionId });
 
-      officer = await Officer.findOne({ transactionId });
-      console.log("Officer found by transactionId:", officer);
-      if (!officer) {
-        return res.status(404).json({ error: 'No officer found with this transaction ID' });
-      }
-    } else if (username) {
-      if (typeof username !== 'string' || username.trim() === '') {
-        return res.status(400).json({ error: 'Invalid username' });
-      }
-
-      officer = await Officer.findOne({ username: username.trim() });
-      console.log("Officer found by username:", officer);
-      if (!officer) {
-        return res.status(404).json({ error: 'No officer found with this username' });
-      }
-    } else {
-      return res.status(400).json({ error: 'Provide either transactionId or username' });
+    if (!officer) {
+      return res.status(404).json({ error: 'No officer found with this transaction ID' });
     }
 
     if (officer.subscribed) {
       return res.status(400).json({ error: 'Officer is already subscribed' });
     }
 
+    // Update officer status
     officer.subscribed = true;
     officer.transactionId = null;
     officer.subscriptionDate = new Date();
 
     await officer.save();
-    console.log("Officer successfully activated:", officer.username);
 
-    const officerData = officer.toObject();
-    delete officerData.password;
-
-    return res.status(200).json({
-      message: 'Subscription activated successfully',
-      officer: officerData
-    });
-
+    res.json({ message: 'Subscription activated successfully' });
   } catch (error) {
-    console.error('Activation error (detailed):', error);
-    return res.status(500).json({ error: 'Internal server error during activation' });
+    console.error('Activation error:', error);
+    res.status(500).json({ error: 'Internal server error during activation' });
   }
 });
 
