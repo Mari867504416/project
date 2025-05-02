@@ -227,33 +227,35 @@ app.get('/admin/officers', async (req, res) => {
 app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId } = req.body;
+    console.log("Received transactionId:", transactionId);
 
-    // Validate input
     if (!transactionId || !/^\d{12}$/.test(transactionId)) {
       return res.status(400).json({ error: 'Invalid or missing 12-digit transaction ID' });
     }
 
-    // Find the officer by transactionId
     const officer = await Officer.findOne({ transactionId });
-
     if (!officer) {
       return res.status(404).json({ error: 'No officer found with this transaction ID' });
     }
+
+    console.log("Officer found:", officer.username);
 
     if (officer.subscribed) {
       return res.status(400).json({ error: 'Officer is already subscribed' });
     }
 
-    // Update officer status
+    // Prepare activation
     officer.subscribed = true;
     officer.transactionId = null;
     officer.subscriptionDate = new Date();
 
-    await officer.save();
+    console.log("Saving officer...");
+    await officer.save(); // <--- Most likely where error occurs
+    console.log("Officer saved!");
 
     res.json({ message: 'Subscription activated successfully' });
   } catch (error) {
-    console.error('Activation error:', error);
+    console.error('Activation error (backend):', error);
     res.status(500).json({ error: 'Internal server error during activation' });
   }
 });
