@@ -324,4 +324,4 @@ app.post('/officer/status', async (req, res) => {
     console.error('Error checking activation status:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
-})
+});
