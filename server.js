@@ -228,16 +228,17 @@ app.get('/admin/officers', async (req, res) => {
 app.post('/admin/activate', async (req, res) => {
   try {
     const { transactionId, username } = req.body;
+    console.log("Received activation request:", { transactionId, username });
 
     let officer;
 
-    // Validate and fetch officer
     if (transactionId) {
       if (!/^\d{12}$/.test(transactionId)) {
         return res.status(400).json({ error: 'Invalid transaction ID format (must be 12 digits)' });
       }
 
       officer = await Officer.findOne({ transactionId });
+      console.log("Officer found by transactionId:", officer);
       if (!officer) {
         return res.status(404).json({ error: 'No officer found with this transaction ID' });
       }
@@ -247,6 +248,7 @@ app.post('/admin/activate', async (req, res) => {
       }
 
       officer = await Officer.findOne({ username: username.trim() });
+      console.log("Officer found by username:", officer);
       if (!officer) {
         return res.status(404).json({ error: 'No officer found with this username' });
       }
@@ -254,17 +256,16 @@ app.post('/admin/activate', async (req, res) => {
       return res.status(400).json({ error: 'Provide either transactionId or username' });
     }
 
-    // Check if already subscribed
     if (officer.subscribed) {
       return res.status(400).json({ error: 'Officer is already subscribed' });
     }
 
-    // Activate officer
     officer.subscribed = true;
-    officer.transactionId = null; // Clear transactionId after activation
+    officer.transactionId = null;
     officer.subscriptionDate = new Date();
 
     await officer.save();
+    console.log("Officer successfully activated:", officer.username);
 
     const officerData = officer.toObject();
     delete officerData.password;
@@ -275,10 +276,11 @@ app.post('/admin/activate', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Activation error:', error);
+    console.error('Activation error (detailed):', error);
     return res.status(500).json({ error: 'Internal server error during activation' });
   }
 });
+
 
 
 // Admin - Reset password
