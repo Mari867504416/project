@@ -231,36 +231,37 @@ app.post('/admin/activate', async (req, res) => {
 
     let officer;
 
-    // Case 1: Activate using transactionId
+    // Validate and fetch officer
     if (transactionId) {
       if (!/^\d{12}$/.test(transactionId)) {
-        return res.status(400).json({ error: 'Invalid transaction ID format' });
+        return res.status(400).json({ error: 'Invalid transaction ID format (must be 12 digits)' });
       }
 
       officer = await Officer.findOne({ transactionId });
       if (!officer) {
         return res.status(404).json({ error: 'No officer found with this transaction ID' });
       }
-    }
+    } else if (username) {
+      if (typeof username !== 'string' || username.trim() === '') {
+        return res.status(400).json({ error: 'Invalid username' });
+      }
 
-    // Case 2: Activate using username
-    else if (username) {
-      officer = await Officer.findOne({ username });
+      officer = await Officer.findOne({ username: username.trim() });
       if (!officer) {
         return res.status(404).json({ error: 'No officer found with this username' });
       }
-    }
-
-    else {
+    } else {
       return res.status(400).json({ error: 'Provide either transactionId or username' });
     }
 
+    // Check if already subscribed
     if (officer.subscribed) {
       return res.status(400).json({ error: 'Officer is already subscribed' });
     }
 
+    // Activate officer
     officer.subscribed = true;
-    officer.transactionId = null; // clear after activation
+    officer.transactionId = null; // Clear transactionId after activation
     officer.subscriptionDate = new Date();
 
     await officer.save();
@@ -268,14 +269,14 @@ app.post('/admin/activate', async (req, res) => {
     const officerData = officer.toObject();
     delete officerData.password;
 
-    res.json({
+    return res.status(200).json({
       message: 'Subscription activated successfully',
       officer: officerData
     });
 
   } catch (error) {
     console.error('Activation error:', error);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Internal server error during activation' });
   }
 });
 
