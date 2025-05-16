@@ -68,9 +68,9 @@ const Officer = mongoose.model('Officer', new mongoose.Schema({
 
 // Initialize Admin
 async function initializeAdmin() {
-  const adminExists = await Admin.exists({ username: 'admin' });
+  const adminExists = await Admin.exists({ username: 'Admin' });
   if (!adminExists) {
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const hashedPassword = await bcrypt.hash('Admin123', 10);
     await Admin.create({ username: 'admin', password: hashedPassword });
     console.log('Default admin created');
   }
