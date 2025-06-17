@@ -239,7 +239,6 @@ app.post('/admin/activate', async (req, res) => {
     if (!officer) {
       return res.status(404).json({ error: 'No officer found with this transaction ID' });
     }
-
     console.log("Officer found:", officer.username);
 
     if (officer.subscribed) {
