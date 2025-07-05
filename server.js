@@ -307,3 +307,28 @@ app.post('/officer/status', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// Officer - Reset password via username and mobile number
+app.post('/officer/reset-password', async (req, res) => {
+  try {
+    const { username, mobile, password } = req.body;
+
+    if (!username || !mobile || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    const officer = await Officer.findOne({ username, mobile });
+
+    if (!officer) {
+      return res.status(404).json({ error: 'Officer not found or mobile number does not match' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    officer.password = hashedPassword;
+    await officer.save();
+
+    res.json({ message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Officer password reset error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
