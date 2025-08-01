@@ -332,3 +332,46 @@ app.post('/officer/reset-password', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// Submit Quiz Result
+app.post('/submit-result', async (req, res) => {
+  try {
+    const { username, name, phone, score, total, date } = req.body;
+
+    if (!username || score == null || total == null) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    const result = new Result({
+      username,
+      name: name || "Unknown",
+      phone: phone || "Not Provided",
+      score,
+      total,
+      date: date ? new Date(date) : new Date()
+    });
+
+    await result.save();
+    res.json({ message: 'Result submitted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get All Results
+app.get('/get-results', async (req, res) => {
+  try {
+    const results = await Result.find().sort({ date: -1 });
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Start Server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
+
+// Initialize admin on server start
+initializeAdmin();
