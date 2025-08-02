@@ -332,3 +332,38 @@ app.post('/officer/reset-password', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+const Result = mongoose.model('Result', new mongoose.Schema({
+  username: { type: String, required: true },
+  name: { type: String, required: true },
+  address: { type: String },
+  score: { type: Number, required: true },
+  total: { type: Number, required: true },
+  date: { type: Date, default: Date.now }
+}));
+app.post('/submit-result', async (req, res) => {
+  try {
+    const { username, name, phone, score, total, date } = req.body;
+
+    if (!username || score == null || total == null) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const newResult = new Result({
+      username,
+      name: name || "Unknown",
+      phone: phone || "Not Provided",
+      score,
+      total,
+      date: date ? new Date(date) : new Date()
+    });
+
+    await newResult.save();
+    res.json({ message: 'Result submitted successfully' });
+  } catch (error) {
+    console.error('Submit result error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
