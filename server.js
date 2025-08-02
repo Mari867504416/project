@@ -365,5 +365,14 @@ app.post('/submit-result', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+app.get('/get-results', async (req, res) => {
+  try {
+    const results = await Result.find().sort({ date: -1 });
+    res.json(results);
+  } catch (error) {
+    console.error('Fetch results error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
