@@ -66,7 +66,7 @@ const TransferApplication =
 
     transferType: {
       type: String,
-      enum: ['One Way', 'Mutual'],   // ✅ FIXED ENUM
+      enum: ['One Way', 'Mutual'],
       required: true
     },
 
@@ -78,6 +78,8 @@ const TransferApplication =
     option1: { type: String, required: true },
     option2: String,
     option3: String,
+
+    contactNumber: { type: String, required: true }, // ✅ Added
 
     createdAt: { type: Date, default: Date.now }
   }));
@@ -182,17 +184,21 @@ app.post('/transfer/apply', async (req, res) => {
     if (!officer) return res.status(404).json({ error: 'Officer not found' });
     if (!officer.subscribed) return res.status(403).json({ error: 'Subscription not active' });
 
-    await TransferApplication.create(req.body);
+    const { contactNumber } = req.body;
+    if (!contactNumber) return res.status(400).json({ error: 'Contact number is required' });
+
+    await TransferApplication.create(req.body); // req.body includes contactNumber
     res.json({ message: 'Transfer application submitted successfully' });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-/* -------- Dashboard -------- */
+/* -------- Dashboard / Get all Transfers -------- */
 app.get('/transfer/all', async (req, res) => {
   const list = await TransferApplication.find({}, { __v: 0 }).sort({ createdAt: -1 });
-  res.json(list);
+  res.json(list); // includes contactNumber
 });
 
 /* ================= SERVER ================= */
