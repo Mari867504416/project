@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const ExcelJS = require("exceljs");
 
 const app = express();
 
@@ -374,5 +375,67 @@ app.get('/get-results', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+const Transfer = mongoose.model("Transfer", {
+  transferType: String,
+  name: String,
+  workingDistrict: String,
+  designation: String,
+  joiningDate: Date,
+  option1: String,
+  option2: String,
+  option3: String,
+  createdAt: { type: Date, default: Date.now }
+});
 
+app.get("/api/transfer", async (req, res) => {
+  res.json(await Transfer.find().sort({ createdAt: -1 }));
+});
+
+/* EXCEL DOWNLOAD */
+app.get("/api/transfer/excel", async (req, res) => {
+  const data = await Transfer.find();
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Transfer Applications");
+
+  sheet.columns = [
+    { header: "Name", key: "name", width: 20 },
+    { header: "Working District", key: "workingDistrict", width: 20 },
+    { header: "Designation", key: "designation", width: 15 },
+    { header: "Joining Date", key: "joiningDate", width: 15 },
+    { header: "Transfer Type", key: "transferType", width: 15 },
+    { header: "Option 1", key: "option1", width: 15 },
+    { header: "Option 2", key: "option2", width: 15 },
+    { header: "Option 3", key: "option3", width: 15 }
+  ];
+
+  data.forEach(d => {
+    sheet.addRow({
+      name: d.name,
+      workingDistrict: d.workingDistrict,
+      designation: d.designation,
+      joiningDate: d.joiningDate,
+      transferType: d.transferType,
+      option1: d.option1,
+      option2: d.option2,
+      option3: d.option3
+    });
+  });
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    "attachment; filename=TransferApplications.xlsx"
+  );
+
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+app.listen(3000, () =>
+  console.log("Server running at http://localhost:3000")
+);
 
