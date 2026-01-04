@@ -177,22 +177,10 @@ app.get('/get-results', async (req, res) => {
 
 /* ================= TRANSFER MODULE ================= */
 
-/* ================= TRANSFER MODULE ================= */
-
-/* -------- Apply Transfer -------- */
 app.post('/transfer/apply', async (req, res) => {
   try {
-    const officer = await Officer.findOne({ username: req.body.username });
-    if (!officer) {
-      return res.status(404).json({ error: 'Officer not found' });
-    }
-
-    // ❌ Subscription verification REMOVED
-    // if (!officer.subscribed) {
-    //   return res.status(403).json({ error: 'Subscription not active' });
-    // }
-
     const { contactNumber } = req.body;
+
     if (!contactNumber) {
       return res.status(400).json({ error: 'Contact number is required' });
     }
@@ -201,18 +189,23 @@ app.post('/transfer/apply', async (req, res) => {
 
     res.json({ message: 'Transfer application submitted successfully' });
   } catch (err) {
-    console.error(err);
+    console.error("Transfer apply error:", err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 /* -------- Dashboard / Get all Transfers -------- */
 app.get('/transfer/all', async (req, res) => {
-  const list = await TransferApplication
-    .find({}, { __v: 0 })
-    .sort({ createdAt: -1 });
+  try {
+    const list = await TransferApplication
+      .find({}, { __v: 0 })
+      .sort({ createdAt: -1 });
 
-  res.json(list);
+    res.json(list);
+  } catch (err) {
+    console.error("Fetch transfer error:", err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 /* ================= SERVER ================= */
