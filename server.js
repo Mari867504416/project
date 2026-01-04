@@ -8,19 +8,18 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// Middleware
+/* ================= MIDDLEWARE ================= */
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use(limiter);
 
-// MongoDB Connection
+/* ================= DB CONNECTION ================= */
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -28,55 +27,37 @@ mongoose.connect(process.env.MONGODB_URI, {
 .then(() => console.log('Connected to MongoDB'))
 .catch(err => console.error('MongoDB connection error:', err));
 
-// Models
-const Admin = mongoose.model('Admin', new mongoose.Schema({
+/* ================= MODELS ================= */
+
+// Admin
+const Admin = mongoose.models.Admin || mongoose.model('Admin', new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true }
 }));
 
-const Officer = mongoose.model('Officer', new mongoose.Schema({
-  name: { type: String, required: true },
-  address: { type: String, required: true },
-  mobile: { 
-    type: String, 
-    required: true, 
-    unique: true,
-    validate: {
-      validator: function(v) {
-        return /^\d{10}$/.test(v);
-      },
-      message: props => `${props.value} is not a valid 10-digit mobile number!`
-    }
-  },
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+// Officer
+const Officer = mongoose.models.Officer || mongoose.model('Officer', new mongoose.Schema({
+  name: String,
+  address: String,
+  mobile: { type: String, unique: true },
+  username: { type: String, unique: true },
+  password: String,
   subscribed: { type: Boolean, default: false },
-  transactionId: { 
-    type: String,
-    validate: {
-      validator: function(v) {
-        return !v || /^\d{12}$/.test(v);
-      },
-      message: props => `${props.value} is not a valid 12-digit transaction ID!`
-    },
-    unique: true,
-    sparse: true
-  },
-  subscriptionDate: { type: Date },
+  transactionId: { type: String, unique: true, sparse: true },
+  subscriptionDate: Date,
   createdAt: { type: Date, default: Date.now }
 }));
 
-// Initialize Admin
-async function initializeAdmin() {
-  const adminExists = await Admin.exists({ username: 'admin' });
-  if (!adminExists) {
-    const hashedPassword = await bcrypt.hash('admin123', 10);
-    await Admin.create({ username: 'admin', password: hashedPassword });
-    console.log('Default admin created');
-  }
-}
+// Result
+const Result = mongoose.models.Result || mongoose.model('Result', new mongoose.Schema({
+  username: String,
+  name: String,
+  address: String,
+  score: Number,
+  total: Number,
+  date: { type: Date, default: Date.now }
+}));
 
-// Routes
 // Transfer Application
 const TransferApplication =
   mongoose.models.TransferApplication ||
@@ -127,58 +108,8 @@ const ALLOWED_DESIGNATIONS = [
   "TYPIST",
   "STENO TYPIST"
 ];
-/* -------- Apply Transfer (FIXED) -------- */
-app.post('/transfer/apply', async (req, res) => {
-  try {
-    const officer = await Officer.findOne({ username: req.body.username });
-    if (!officer) {
-      return res.status(404).json({ error: 'Officer not found' });
-    }
 
-    const requiredFields = [
-      "username",
-      "applicantName",
-      "workingDistrict",
-      "designation",
-      "dateOfJoining",
-      "option1",
-      "contactNumber"
-    ];
-
-    for (let field of requiredFields) {
-      if (!req.body[field]) {
-        return res.status(400).json({ error: `${field} is required` });
-      }
-    }
-
-    /* ✅ DESIGNATION NORMALIZE */
-    const designation = req.body.designation
-      .toString()
-      .trim()
-      .toUpperCase();
-
-    if (!ALLOWED_DESIGNATIONS.includes(designation)) {
-      return res.status(400).json({
-        error: "Invalid designation"
-      });
-    }
-
-    const application = await TransferApplication.create({
-      ...req.body,
-      designation // ✅ clean value only
-    });
-
-    res.json({
-      message: 'Transfer application submitted successfully',
-      id: application._id
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
+/* ================= ROUTES ================= */
 
 // Admin Login
 app.post('/admin/login', async (req, res) => {
@@ -476,6 +407,58 @@ app.get('/get-results', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+/* -------- Apply Transfer -------- */
+/* -------- Apply Transfer (FIXED) -------- */
+app.post('/transfer/apply', async (req, res) => {
+  try {
+    const officer = await Officer.findOne({ username: req.body.username });
+    if (!officer) {
+      return res.status(404).json({ error: 'Officer not found' });
+    }
+
+    const requiredFields = [
+      "username",
+      "applicantName",
+      "workingDistrict",
+      "designation",
+      "dateOfJoining",
+      "option1",
+      "contactNumber"
+    ];
+
+    for (let field of requiredFields) {
+      if (!req.body[field]) {
+        return res.status(400).json({ error: `${field} is required` });
+      }
+    }
+
+    /* ✅ DESIGNATION NORMALIZE */
+    const designation = req.body.designation
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    if (!ALLOWED_DESIGNATIONS.includes(designation)) {
+      return res.status(400).json({
+        error: "Invalid designation"
+      });
+    }
+
+    const application = await TransferApplication.create({
+      ...req.body,
+      designation // ✅ clean value only
+    });
+
+    res.json({
+      message: 'Transfer application submitted successfully',
+      id: application._id
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 
 /* -------- Dashboard / Get all Transfers -------- */
@@ -513,3 +496,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+
