@@ -177,17 +177,28 @@ app.get('/get-results', async (req, res) => {
 
 /* ================= TRANSFER MODULE ================= */
 
+/* ================= TRANSFER MODULE ================= */
+
 /* -------- Apply Transfer -------- */
 app.post('/transfer/apply', async (req, res) => {
   try {
     const officer = await Officer.findOne({ username: req.body.username });
-    if (!officer) return res.status(404).json({ error: 'Officer not found' });
-    if (!officer.subscribed) return res.status(403).json({ error: 'Subscription not active' });
+    if (!officer) {
+      return res.status(404).json({ error: 'Officer not found' });
+    }
+
+    // ❌ Subscription verification REMOVED
+    // if (!officer.subscribed) {
+    //   return res.status(403).json({ error: 'Subscription not active' });
+    // }
 
     const { contactNumber } = req.body;
-    if (!contactNumber) return res.status(400).json({ error: 'Contact number is required' });
+    if (!contactNumber) {
+      return res.status(400).json({ error: 'Contact number is required' });
+    }
 
-    await TransferApplication.create(req.body); // req.body includes contactNumber
+    await TransferApplication.create(req.body);
+
     res.json({ message: 'Transfer application submitted successfully' });
   } catch (err) {
     console.error(err);
@@ -197,8 +208,11 @@ app.post('/transfer/apply', async (req, res) => {
 
 /* -------- Dashboard / Get all Transfers -------- */
 app.get('/transfer/all', async (req, res) => {
-  const list = await TransferApplication.find({}, { __v: 0 }).sort({ createdAt: -1 });
-  res.json(list); // includes contactNumber
+  const list = await TransferApplication
+    .find({}, { __v: 0 })
+    .sort({ createdAt: -1 });
+
+  res.json(list);
 });
 
 /* ================= SERVER ================= */
@@ -206,3 +220,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
