@@ -72,17 +72,24 @@ const TransferApplication =
 
     applicantName: { type: String, required: true },
     workingDistrict: { type: String, required: true },
-    designation: { type: String, required: true },
+
+    designation: {
+      type: String,
+      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST"], // ✅ FIX
+      required: true
+    },
+
     dateOfJoining: { type: Date, required: true },
 
     option1: { type: String, required: true },
     option2: String,
     option3: String,
 
-    contactNumber: { type: String, required: true }, // ✅ Added
+    contactNumber: { type: String, required: true },
 
     createdAt: { type: Date, default: Date.now }
   }));
+
 
 /* ================= INIT ADMIN ================= */
 async function initializeAdmin() {
@@ -94,6 +101,13 @@ async function initializeAdmin() {
   }
 }
 initializeAdmin();
+/* ================= CONSTANTS ================= */
+const ALLOWED_DESIGNATIONS = [
+  "SRI",
+  "JRI",
+  "TYPIST",
+  "STENO TYPIST"
+];
 
 /* ================= ROUTES ================= */
 
@@ -176,6 +190,7 @@ app.get('/get-results', async (req, res) => {
 });
 
 /* -------- Apply Transfer -------- */
+/* -------- Apply Transfer (FIXED) -------- */
 app.post('/transfer/apply', async (req, res) => {
   try {
     const officer = await Officer.findOne({ username: req.body.username });
@@ -183,12 +198,6 @@ app.post('/transfer/apply', async (req, res) => {
       return res.status(404).json({ error: 'Officer not found' });
     }
 
-    // ❌ Subscription verification (optional)
-    // if (!officer.subscribed) {
-    //   return res.status(403).json({ error: 'Subscription not active' });
-    // }
-
-    // Required fields validation
     const requiredFields = [
       "username",
       "applicantName",
@@ -198,23 +207,41 @@ app.post('/transfer/apply', async (req, res) => {
       "option1",
       "contactNumber"
     ];
+
     for (let field of requiredFields) {
       if (!req.body[field]) {
         return res.status(400).json({ error: `${field} is required` });
       }
     }
 
-    const application = await TransferApplication.create(req.body);
+    /* ✅ DESIGNATION NORMALIZE */
+    const designation = req.body.designation
+      .toString()
+      .trim()
+      .toUpperCase();
 
-    res.json({ 
+    if (!ALLOWED_DESIGNATIONS.includes(designation)) {
+      return res.status(400).json({
+        error: "Invalid designation"
+      });
+    }
+
+    const application = await TransferApplication.create({
+      ...req.body,
+      designation // ✅ clean value only
+    });
+
+    res.json({
       message: 'Transfer application submitted successfully',
       id: application._id
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 /* -------- Dashboard / Get all Transfers -------- */
 app.get('/transfer/all', async (req, res) => {
@@ -228,6 +255,22 @@ app.get('/transfer/all', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
+});
+app.get('/transfer/sri', async (req, res) => {
+  const list = await TransferApplication.find({ designation: "SRI" });
+  res.json(list);
+});
+app.get('/transfer/jri', async (req, res) => {
+  const list = await TransferApplication.find({ designation: "JRI" });
+  res.json(list);
+});
+app.get('/transfer/typist', async (req, res) => {
+  const list = await TransferApplication.find({ designation: "TYPIST" });
+  res.json(list);
+});
+app.get('/transfer/stenotypist', async (req, res) => {
+  const list = await TransferApplication.find({ designation: "STENO TYPIST" });
+  res.json(list);
 });
 
 /* ================= SERVER ================= */
