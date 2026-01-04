@@ -8,24 +8,73 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-/* ================= MIDDLEWARE ================= */
+// Middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
 });
 app.use(limiter);
 
-/* ================= DB CONNECTION ================= */
+// MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
 .then(() => console.log('Connected to MongoDB'))
 .catch(err => console.error('MongoDB connection error:', err));
+
+// Models
+const Admin = mongoose.model('Admin', new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true }
+}));
+
+const Officer = mongoose.model('Officer', new mongoose.Schema({
+  name: { type: String, required: true },
+  address: { type: String, required: true },
+  mobile: { 
+    type: String, 
+    required: true, 
+    unique: true,
+    validate: {
+      validator: function(v) {
+        return /^\d{10}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid 10-digit mobile number!`
+    }
+  },
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  subscribed: { type: Boolean, default: false },
+  transactionId: { 
+    type: String,
+    validate: {
+      validator: function(v) {
+        return !v || /^\d{12}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid 12-digit transaction ID!`
+    },
+    unique: true,
+    sparse: true
+  },
+  subscriptionDate: { type: Date },
+  createdAt: { type: Date, default: Date.now }
+}));
+
+// Initialize Admin
+async function initializeAdmin() {
+  const adminExists = await Admin.exists({ username: 'admin' });
+  if (!adminExists) {
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    await Admin.create({ username: 'admin', password: hashedPassword });
+    console.log('Default admin created');
+  }
+}
 
 /* ================= MODELS ================= */
 
