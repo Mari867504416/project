@@ -77,6 +77,108 @@ async function initializeAdmin() {
 }
 
 // Routes
+// Transfer Application
+const TransferApplication =
+  mongoose.models.TransferApplication ||
+  mongoose.model('TransferApplication', new mongoose.Schema({
+    username: { type: String, required: true },
+
+    transferType: {
+      type: String,
+      enum: ['One Way', 'Mutual'],
+      required: true
+    },
+
+    applicantName: { type: String, required: true },
+    workingDistrict: { type: String, required: true },
+
+    designation: {
+      type: String,
+      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST"], // ✅ FIX
+      required: true
+    },
+
+    dateOfJoining: { type: Date, required: true },
+
+    option1: { type: String, required: true },
+    option2: String,
+    option3: String,
+
+    contactNumber: { type: String, required: true },
+
+    createdAt: { type: Date, default: Date.now }
+  }));
+
+
+/* ================= INIT ADMIN ================= */
+async function initializeAdmin() {
+  const exists = await Admin.exists({ username: 'admin' });
+  if (!exists) {
+    const hash = await bcrypt.hash('admin123', 10);
+    await Admin.create({ username: 'admin', password: hash });
+    console.log('Default admin created');
+  }
+}
+initializeAdmin();
+/* ================= CONSTANTS ================= */
+const ALLOWED_DESIGNATIONS = [
+  "SRI",
+  "JRI",
+  "TYPIST",
+  "STENO TYPIST"
+];
+/* -------- Apply Transfer (FIXED) -------- */
+app.post('/transfer/apply', async (req, res) => {
+  try {
+    const officer = await Officer.findOne({ username: req.body.username });
+    if (!officer) {
+      return res.status(404).json({ error: 'Officer not found' });
+    }
+
+    const requiredFields = [
+      "username",
+      "applicantName",
+      "workingDistrict",
+      "designation",
+      "dateOfJoining",
+      "option1",
+      "contactNumber"
+    ];
+
+    for (let field of requiredFields) {
+      if (!req.body[field]) {
+        return res.status(400).json({ error: `${field} is required` });
+      }
+    }
+
+    /* ✅ DESIGNATION NORMALIZE */
+    const designation = req.body.designation
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    if (!ALLOWED_DESIGNATIONS.includes(designation)) {
+      return res.status(400).json({
+        error: "Invalid designation"
+      });
+    }
+
+    const application = await TransferApplication.create({
+      ...req.body,
+      designation // ✅ clean value only
+    });
+
+    res.json({
+      message: 'Transfer application submitted successfully',
+      id: application._id
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 // Admin Login
 app.post('/admin/login', async (req, res) => {
@@ -372,108 +474,6 @@ app.get('/get-results', async (req, res) => {
   } catch (error) {
     console.error('Fetch results error:', error);
     res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Transfer Application
-const TransferApplication =
-  mongoose.models.TransferApplication ||
-  mongoose.model('TransferApplication', new mongoose.Schema({
-    username: { type: String, required: true },
-
-    transferType: {
-      type: String,
-      enum: ['One Way', 'Mutual'],
-      required: true
-    },
-
-    applicantName: { type: String, required: true },
-    workingDistrict: { type: String, required: true },
-
-    designation: {
-      type: String,
-      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST"], // ✅ FIX
-      required: true
-    },
-
-    dateOfJoining: { type: Date, required: true },
-
-    option1: { type: String, required: true },
-    option2: String,
-    option3: String,
-
-    contactNumber: { type: String, required: true },
-
-    createdAt: { type: Date, default: Date.now }
-  }));
-
-
-/* ================= INIT ADMIN ================= */
-async function initializeAdmin() {
-  const exists = await Admin.exists({ username: 'admin' });
-  if (!exists) {
-    const hash = await bcrypt.hash('admin123', 10);
-    await Admin.create({ username: 'admin', password: hash });
-    console.log('Default admin created');
-  }
-}
-initializeAdmin();
-/* ================= CONSTANTS ================= */
-const ALLOWED_DESIGNATIONS = [
-  "SRI",
-  "JRI",
-  "TYPIST",
-  "STENO TYPIST"
-];
-/* -------- Apply Transfer (FIXED) -------- */
-app.post('/transfer/apply', async (req, res) => {
-  try {
-    const officer = await Officer.findOne({ username: req.body.username });
-    if (!officer) {
-      return res.status(404).json({ error: 'Officer not found' });
-    }
-
-    const requiredFields = [
-      "username",
-      "applicantName",
-      "workingDistrict",
-      "designation",
-      "dateOfJoining",
-      "option1",
-      "contactNumber"
-    ];
-
-    for (let field of requiredFields) {
-      if (!req.body[field]) {
-        return res.status(400).json({ error: `${field} is required` });
-      }
-    }
-
-    /* ✅ DESIGNATION NORMALIZE */
-    const designation = req.body.designation
-      .toString()
-      .trim()
-      .toUpperCase();
-
-    if (!ALLOWED_DESIGNATIONS.includes(designation)) {
-      return res.status(400).json({
-        error: "Invalid designation"
-      });
-    }
-
-    const application = await TransferApplication.create({
-      ...req.body,
-      designation // ✅ clean value only
-    });
-
-    res.json({
-      message: 'Transfer application submitted successfully',
-      id: application._id
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
   }
 });
 
