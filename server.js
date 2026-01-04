@@ -37,13 +37,29 @@ const Admin = mongoose.models.Admin || mongoose.model('Admin', new mongoose.Sche
 
 // Officer
 const Officer = mongoose.models.Officer || mongoose.model('Officer', new mongoose.Schema({
-  name: String,
-  address: String,
-  mobile: { type: String, unique: true },
-  username: { type: String, unique: true },
-  password: String,
+  name: { type: String, required: true },
+  address: { type: String, required: true },
+  mobile: {
+    type: String,
+    required: true,
+    unique: true,
+    validate: {
+      validator: v => /^\d{10}$/.test(v),
+      message: props => `${props.value} is not a valid 10-digit mobile number`
+    }
+  },
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
   subscribed: { type: Boolean, default: false },
-  transactionId: { type: String, unique: true, sparse: true },
+  transactionId: {
+    type: String,
+    unique: true,
+    sparse: true,
+    validate: {
+      validator: v => !v || /^\d{12}$/.test(v),
+      message: 'Transaction ID must be 12 digits'
+    }
+  },
   subscriptionDate: Date,
   createdAt: { type: Date, default: Date.now }
 }));
@@ -63,33 +79,24 @@ const TransferApplication =
   mongoose.models.TransferApplication ||
   mongoose.model('TransferApplication', new mongoose.Schema({
     username: { type: String, required: true },
-
-    transferType: {
-      type: String,
-      enum: ['One Way', 'Mutual'],
-      required: true
-    },
-
+    transferType: { type: String, enum: ['One Way', 'Mutual'], required: true },
     applicantName: { type: String, required: true },
     workingDistrict: { type: String, required: true },
-
     designation: {
       type: String,
-      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST"], // ✅ FIX
+      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST"],
       required: true
     },
-
     dateOfJoining: { type: Date, required: true },
-
     option1: { type: String, required: true },
     option2: String,
     option3: String,
-
     contactNumber: { type: String, required: true },
-
     createdAt: { type: Date, default: Date.now }
   }));
 
+/* ================= CONSTANTS ================= */
+const ALLOWED_DESIGNATIONS = ["SRI", "JRI", "TYPIST", "STENO TYPIST"];
 
 /* ================= INIT ADMIN ================= */
 async function initializeAdmin() {
@@ -101,17 +108,10 @@ async function initializeAdmin() {
   }
 }
 initializeAdmin();
-/* ================= CONSTANTS ================= */
-const ALLOWED_DESIGNATIONS = [
-  "SRI",
-  "JRI",
-  "TYPIST",
-  "STENO TYPIST"
-];
 
 /* ================= ROUTES ================= */
 
-/* -------- Admin Login -------- */
+// Admin Login
 app.post('/admin/login', async (req, res) => {
   const admin = await Admin.findOne({ username: req.body.username });
   if (!admin || !(await bcrypt.compare(req.body.password, admin.password))) {
@@ -120,7 +120,7 @@ app.post('/admin/login', async (req, res) => {
   res.json({ message: 'Admin login successful' });
 });
 
-/* -------- Officer Login -------- */
+// Officer Login
 app.post('/login', async (req, res) => {
   const officer = await Officer.findOne({ username: req.body.username });
   if (!officer || !(await bcrypt.compare(req.body.password, officer.password))) {
@@ -131,7 +131,7 @@ app.post('/login', async (req, res) => {
   res.json({ message: 'Login successful', officer: obj, subscribed: officer.subscribed });
 });
 
-/* -------- Officer Signup -------- */
+// Officer Signup
 app.post('/signup', async (req, res) => {
   const hash = await bcrypt.hash(req.body.password, 10);
   const officer = await Officer.create({ ...req.body, password: hash });
@@ -140,7 +140,7 @@ app.post('/signup', async (req, res) => {
   res.json({ message: 'Officer created successfully', officer: obj });
 });
 
-/* -------- Transaction Submit -------- */
+// Submit Transaction
 app.post('/submit-transaction', async (req, res) => {
   const officer = await Officer.findOneAndUpdate(
     { username: req.body.username },
@@ -151,7 +151,7 @@ app.post('/submit-transaction', async (req, res) => {
   res.json({ message: 'Transaction submitted successfully' });
 });
 
-/* -------- Admin Activate -------- */
+// Admin Activate
 app.post('/admin/activate', async (req, res) => {
   const officer = await Officer.findOne({ transactionId: req.body.transactionId });
   if (!officer) return res.status(404).json({ error: 'Not found' });
@@ -161,14 +161,14 @@ app.post('/admin/activate', async (req, res) => {
   res.json({ message: 'Subscription activated successfully' });
 });
 
-/* -------- Officer Status -------- */
+// Officer Status
 app.post('/officer/status', async (req, res) => {
   const officer = await Officer.findOne({ username: req.body.username });
   if (!officer) return res.status(404).json({ error: 'Officer not found' });
   res.json({ activated: officer.subscribed });
 });
 
-/* -------- Officer Reset Password -------- */
+// Officer Reset Password
 app.post('/officer/reset-password', async (req, res) => {
   const officer = await Officer.findOne({ username: req.body.username, mobile: req.body.mobile });
   if (!officer) return res.status(404).json({ error: 'Officer not found' });
@@ -177,100 +177,50 @@ app.post('/officer/reset-password', async (req, res) => {
   res.json({ message: 'Password reset successfully' });
 });
 
-/* -------- Submit Result -------- */
+// Submit Result
 app.post('/submit-result', async (req, res) => {
   await Result.create(req.body);
   res.json({ message: 'Result submitted successfully' });
 });
 
-/* -------- Get Results -------- */
+// Get Results
 app.get('/get-results', async (req, res) => {
   const list = await Result.find().sort({ date: -1 });
   res.json(list);
 });
 
-/* -------- Apply Transfer -------- */
-/* -------- Apply Transfer (FIXED) -------- */
+/* ================= TRANSFER ROUTES ================= */
+
+// Apply Transfer
 app.post('/transfer/apply', async (req, res) => {
-  try {
-    const officer = await Officer.findOne({ username: req.body.username });
-    if (!officer) {
-      return res.status(404).json({ error: 'Officer not found' });
-    }
-
-    const requiredFields = [
-      "username",
-      "applicantName",
-      "workingDistrict",
-      "designation",
-      "dateOfJoining",
-      "option1",
-      "contactNumber"
-    ];
-
-    for (let field of requiredFields) {
-      if (!req.body[field]) {
-        return res.status(400).json({ error: `${field} is required` });
-      }
-    }
-
-    /* ✅ DESIGNATION NORMALIZE */
-    const designation = req.body.designation
-      .toString()
-      .trim()
-      .toUpperCase();
-
-    if (!ALLOWED_DESIGNATIONS.includes(designation)) {
-      return res.status(400).json({
-        error: "Invalid designation"
-      });
-    }
-
-    const application = await TransferApplication.create({
-      ...req.body,
-      designation // ✅ clean value only
-    });
-
-    res.json({
-      message: 'Transfer application submitted successfully',
-      id: application._id
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  const designation = req.body.designation?.trim().toUpperCase();
+  if (!ALLOWED_DESIGNATIONS.includes(designation)) {
+    return res.status(400).json({ error: "Invalid designation" });
   }
+
+  const application = await TransferApplication.create({
+    ...req.body,
+    designation
+  });
+
+  res.json({ message: 'Transfer application submitted', id: application._id });
 });
 
-
-/* -------- Dashboard / Get all Transfers -------- */
+// Transfer Lists
 app.get('/transfer/all', async (req, res) => {
-  try {
-    const list = await TransferApplication
-      .find({}, { __v: 0 })
-      .sort({ createdAt: -1 });
-
-    res.json(list);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  res.json(await TransferApplication.find().sort({ createdAt: -1 }));
 });
 app.get('/transfer/sri', async (req, res) => {
-  const list = await TransferApplication.find({ designation: "SRI" });
-  res.json(list);
+  res.json(await TransferApplication.find({ designation: "SRI" }));
 });
 app.get('/transfer/jri', async (req, res) => {
-  const list = await TransferApplication.find({ designation: "JRI" });
-  res.json(list);
+  res.json(await TransferApplication.find({ designation: "JRI" }));
 });
 app.get('/transfer/typist', async (req, res) => {
-  const list = await TransferApplication.find({ designation: "TYPIST" });
-  res.json(list);
+  res.json(await TransferApplication.find({ designation: "TYPIST" }));
 });
 app.get('/transfer/stenotypist', async (req, res) => {
-  const list = await TransferApplication.find({ designation: "STENO TYPIST" });
-  res.json(list);
+  res.json(await TransferApplication.find({ designation: "STENO TYPIST" }));
 });
 
 /* ================= SERVER ================= */
@@ -278,5 +228,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
