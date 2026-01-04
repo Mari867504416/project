@@ -175,21 +175,43 @@ app.get('/get-results', async (req, res) => {
   res.json(list);
 });
 
-/* ================= TRANSFER MODULE ================= */
-
+/* -------- Apply Transfer -------- */
 app.post('/transfer/apply', async (req, res) => {
   try {
-    const { contactNumber } = req.body;
-
-    if (!contactNumber) {
-      return res.status(400).json({ error: 'Contact number is required' });
+    const officer = await Officer.findOne({ username: req.body.username });
+    if (!officer) {
+      return res.status(404).json({ error: 'Officer not found' });
     }
 
-    await TransferApplication.create(req.body);
+    // ❌ Subscription verification (optional)
+    // if (!officer.subscribed) {
+    //   return res.status(403).json({ error: 'Subscription not active' });
+    // }
 
-    res.json({ message: 'Transfer application submitted successfully' });
+    // Required fields validation
+    const requiredFields = [
+      "username",
+      "applicantName",
+      "workingDistrict",
+      "designation",
+      "dateOfJoining",
+      "option1",
+      "contactNumber"
+    ];
+    for (let field of requiredFields) {
+      if (!req.body[field]) {
+        return res.status(400).json({ error: `${field} is required` });
+      }
+    }
+
+    const application = await TransferApplication.create(req.body);
+
+    res.json({ 
+      message: 'Transfer application submitted successfully',
+      id: application._id
+    });
   } catch (err) {
-    console.error("Transfer apply error:", err);
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -203,7 +225,7 @@ app.get('/transfer/all', async (req, res) => {
 
     res.json(list);
   } catch (err) {
-    console.error("Fetch transfer error:", err);
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -213,4 +235,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
 
