@@ -150,6 +150,16 @@ app.post('/submit-transaction', async (req, res) => {
   if (!officer) return res.status(404).json({ error: 'Officer not found' });
   res.json({ message: 'Transaction submitted successfully' });
 });
+// Admin - Get all officers
+app.get('/admin/officers', async (req, res) => {
+  try {
+    const officers = await Officer.find({}, { password: 0 })
+      .sort({ createdAt: -1 }); // Sort by newest first
+    res.json(officers);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // Admin Activate
 app.post('/admin/activate', async (req, res) => {
