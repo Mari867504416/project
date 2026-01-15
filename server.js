@@ -84,7 +84,7 @@ const TransferApplication =
     workingDistrict: { type: String, required: true },
     designation: {
       type: String,
-      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST"],
+      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST", "Deputy Tahsildar", "Tahsildar"],
       required: true
     },
     dateOfJoining: { type: Date, required: true },
