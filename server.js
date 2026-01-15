@@ -84,7 +84,7 @@ const TransferApplication =
     workingDistrict: { type: String, required: true },
     designation: {
       type: String,
-      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST", "Deputy Tahsildar", "Tahsildar"],
+      enum: ["SRI", "JRI", "TYPIST", "STENO TYPIST", "DEPUTY TAHSILDAR", "TAHSILDAR"],
       required: true
     },
     dateOfJoining: { type: Date, required: true },
@@ -96,7 +96,7 @@ const TransferApplication =
   }));
 
 /* ================= CONSTANTS ================= */
-const ALLOWED_DESIGNATIONS = ["SRI", "JRI", "TYPIST", "STENO TYPIST", "Deputy Tahsildar", "Tahsildar"];
+const ALLOWED_DESIGNATIONS = ["SRI", "JRI", "TYPIST", "STENO TYPIST", "DEPUTY TAHSILDAR", "TAHSILDAR"];
 
 /* ================= INIT ADMIN ================= */
 async function initializeAdmin() {
@@ -233,10 +233,10 @@ app.get('/transfer/stenotypist', async (req, res) => {
   res.json(await TransferApplication.find({ designation: "STENO TYPIST" }));
 });
 app.get('/transfer/deputytahsildar', async (req, res) => {
-  res.json(await TransferApplication.find({ designation: "Deputy Tahsildar" }));
+  res.json(await TransferApplication.find({ designation: "DEPUTY TAHSILDAR" }));
 });
 app.get('/transfer/tahsildar', async (req, res) => {
-  res.json(await TransferApplication.find({ designation: "Tahsildar" }));
+  res.json(await TransferApplication.find({ designation: "TAHSILDAR" }));
 });
 /* ================= SERVER ================= */
 const PORT = process.env.PORT || 3000;
