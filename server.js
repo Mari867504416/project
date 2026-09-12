@@ -1286,6 +1286,163 @@ async function createQueryEmbedding(question) {
   return values;
 
 }
+/* =========================================================
+   GEMINI GENERATE CONTENT WITH RETRY + FALLBACK
+========================================================= */
+
+async function generateGeminiAnswer(prompt) {
+
+  const modelsToTry = [
+    'gemini-3.6-flash',
+    'gemini-2.5-flash'
+  ];
+
+  let lastError = null;
+
+  for (const modelName of modelsToTry) {
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+
+      try {
+
+        console.log(
+          `🤖 Gemini model: ${modelName} | attempt: ${attempt}/3`
+        );
+
+        const response =
+          await gemini.models.generateContent({
+
+            model: modelName,
+
+            contents: prompt,
+
+            config: {
+
+              systemInstruction: `
+
+You are an AI assistant for the Tamil Nadu Revenue Department.
+
+Answer ONLY from the retrieved documents supplied in the prompt.
+
+STRICT RULES:
+
+1. Use retrieved document content as the factual source.
+2. If the answer is present, answer it clearly.
+3. Do not require exact wording to appear in the document.
+4. You may summarize and explain the retrieved content.
+5. Do not invent Government Orders.
+6. Do not invent G.O. numbers.
+7. Do not invent dates.
+8. Do not invent Acts.
+9. Do not invent Rules.
+10. Do not invent Sections.
+11. Do not invent proceedings.
+12. Do not invent circular numbers.
+13. Do not use outside knowledge.
+14. If multiple documents are relevant, combine them carefully.
+15. If information is partial, clearly state the limitation.
+16. If the documents genuinely do not contain the answer, say:
+   "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
+17. If the question is in Tamil, answer in Tamil.
+18. If the question is in English, answer in English.
+19. Mention the relevant document name when useful.
+20. Preserve exact G.O. numbers, dates, Acts, Rules, Sections and Forms as found in the documents.
+
+`
+
+            }
+
+          });
+
+        console.log(
+          `✅ Gemini answer generated using ${modelName}`
+        );
+
+        return response;
+
+      } catch (error) {
+
+        lastError = error;
+
+        const status =
+          error?.status ||
+          error?.code ||
+          error?.error?.code;
+
+        console.error(
+          `⚠️ Gemini ${modelName} attempt ${attempt} failed:`,
+          status,
+          error?.message || error
+        );
+
+        /*
+         * Retry temporary server errors
+         */
+
+        if (
+          status === 503 ||
+          status === 500 ||
+          status === 502 ||
+          status === 504
+        ) {
+
+          if (attempt < 3) {
+
+            const delay =
+              attempt * 3000;
+
+            console.log(
+              `⏳ Waiting ${delay} ms before retry...`
+            );
+
+            await new Promise(
+              resolve =>
+                setTimeout(resolve, delay)
+            );
+
+            continue;
+          }
+
+        }
+
+        /*
+         * Quota error
+         * Do not waste retries
+         */
+
+        if (
+          status === 429
+        ) {
+
+          console.error(
+            '❌ Gemini quota exceeded.'
+          );
+
+          throw error;
+
+        }
+
+        /*
+         * Other errors
+         */
+
+        break;
+      }
+    }
+
+    /*
+     * First model failed completely.
+     * Try fallback model.
+     */
+
+    console.log(
+      `🔄 Switching to fallback Gemini model: ${modelsToTry[1]}`
+    );
+  }
+
+  throw lastError;
+
+}
 
 /* =========================================================
    INDEX ONE PDF
@@ -4636,13 +4793,8 @@ ${item.driveUrl || 'Not available'}
        * GEMINI ANSWER
        */
 
-      const response =
-        await gemini.models.generateContent({
-
-          model:
-            'gemini-3.6-flash',
-
-          contents: `
+    const response =
+  await generateGeminiAnswer(`
 USER QUESTION
 =============
 
@@ -4670,84 +4822,7 @@ IMPORTANT:
 - Do NOT invent missing information.
 - If only part of the answer is available, provide that part and clearly state what is not available.
 - Mention the relevant document name when useful.
-`,
-
-          config: {
-
-            systemInstruction: `
-
-You are an AI assistant for the Tamil Nadu Revenue Department.
-
-Your answers must be grounded ONLY in the retrieved documents supplied in the user prompt.
-
-STRICT DOCUMENT-GROUNDED RULES:
-
-1. Use the retrieved document content as the primary and only source of factual information.
-
-2. If the answer is available in the retrieved content, ANSWER IT.
-
-3. Do not say "information is not available" merely because the exact words of the question are not present.
-
-4. You may understand the meaning of the retrieved text and explain it in clear language.
-
-5. Do not invent Government Orders.
-
-6. Do not invent G.O. numbers.
-
-7. Do not invent dates.
-
-8. Do not invent Acts.
-
-9. Do not invent Rules.
-
-10. Do not invent Sections.
-
-11. Do not invent proceedings.
-
-12. Do not invent circular numbers.
-
-13. Do not invent departmental instructions.
-
-14. Do not use information from your general knowledge when it is not contained in the retrieved documents.
-
-15. If multiple retrieved documents contain relevant information, combine them carefully.
-
-16. If documents contain conflicting information, clearly mention the conflict and identify the documents.
-
-17. If the retrieved documents contain only partial information, answer using the available information and state that the retrieved documents do not provide the remaining details.
-
-18. If the retrieved documents genuinely do not contain enough information to answer the question, say exactly:
-
-"கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
-
-19. If the user asks in Tamil, answer in Tamil.
-
-20. If the user asks in English, answer in English.
-
-21. When the information is available, mention the relevant document name.
-
-22. For Government documents, preserve exact G.O. numbers, dates, rule numbers, section numbers and form numbers as they appear in the retrieved text.
-
-23. Do not create fake citations.
-
-24. Do not cite documents that were not retrieved.
-
-25. Do not present assumptions as official Government instructions.
-
-26. Keep the answer concise, clear and suitable for Revenue Department official use.
-
-`
-
-          }
-
-        });
-
-
-      /*
-       * STEP 4
-       * EXTRACT ANSWER
-       */
-
+`);
       const answer =
         typeof response.text === 'string'
           ? response.text.trim()
@@ -4861,7 +4936,28 @@ STRICT DOCUMENT-GROUNDED RULES:
         '❌ Gemini RAG error:',
         error
       );
+/*
+ * GEMINI TEMPORARY UNAVAILABLE
+ */
 
+if (
+  error?.status === 503 ||
+  error?.code === 503 ||
+  error?.error?.code === 503
+) {
+
+  return res.status(503).json({
+
+    success: false,
+
+    error:
+      'Gemini AI service is temporarily unavailable. Please try again shortly.',
+
+    temporaryUnavailable: true
+
+  });
+
+}
 
       /*
        * GEMINI QUOTA EXCEEDED
