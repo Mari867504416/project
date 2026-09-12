@@ -1568,20 +1568,31 @@ async function syncGoogleDriveToGemini() {
        * Skip unchanged file
        */
 
-     const validChunkExists =
-  await DriveChunk.exists({
-
-    driveFileId:
-      file.id,
-
-    embedding: {
-
-      $exists:
-        true
-
-    }
-
+   const storedChunkCount =
+  await DriveChunk.countDocuments({
+    driveFileId: file.id
   });
+
+const invalidChunk =
+  await DriveChunk.findOne({
+    driveFileId: file.id,
+    $expr: {
+      $ne: [
+        {
+          $size: {
+            $ifNull: ['$embedding', []]
+          }
+        },
+        768
+      ]
+    }
+  }).select('_id');
+
+const hasValidEmbeddings =
+  storedChunkCount > 0 &&
+  !invalidChunk &&
+  storedChunkCount ===
+    (existing?.chunkCount || storedChunkCount);
 
 
 /* =====================================================
