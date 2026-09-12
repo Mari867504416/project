@@ -210,12 +210,7 @@ const DriveChunk =
     'DriveChunk',
     driveChunkSchema
   );
-const DriveChunk =
-  mongoose.models.DriveChunk ||
-  mongoose.model(
-    'DriveChunk',
-    driveChunkSchema
-  );
+
 
 
 /* =========================================================
