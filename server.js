@@ -1948,6 +1948,10 @@ if (
    MONGODB VECTOR SEARCH
 ========================================================= */
 
+/* =========================================================
+   MONGODB VECTOR SEARCH
+========================================================= */
+
 async function searchRelevantChunks(
   question,
   limit = 5
@@ -1985,15 +1989,16 @@ async function searchRelevantChunks(
         }
       },
       {
-       $project: {
-  _id: 0,
-  driveFileId: 1,
-  fileName: 1,
-  driveUrl: 1,
-  chunkIndex: 1,
-  text: 1,
-  score: { $meta: 'vectorSearchScore' }
-}
+        $project: {
+          _id: 0,
+          driveFileId: 1,
+          fileName: 1,
+          driveUrl: 1,
+          chunkIndex: 1,
+          text: 1,
+          score: {
+            $meta: 'vectorSearchScore'
+          }
         }
       }
     ]);
