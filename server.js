@@ -211,7 +211,77 @@ const DriveChunk =
     driveChunkSchema
   );
 
+/* =========================================================
+   DRIVE SYNC STATUS
+========================================================= */
 
+const driveSyncFileSchema = new mongoose.Schema(
+  {
+    driveFileId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true
+    },
+
+    fileName: {
+      type: String,
+      required: true
+    },
+
+    modifiedTime: {
+      type: String,
+      default: ''
+    },
+
+    md5Checksum: {
+      type: String,
+      default: ''
+    },
+
+    status: {
+      type: String,
+      enum: [
+        'pending',
+        'processing',
+        'completed',
+        'failed'
+      ],
+      default: 'pending',
+      index: true
+    },
+
+    error: {
+      type: String,
+      default: ''
+    },
+
+    attempts: {
+      type: Number,
+      default: 0
+    },
+
+    lastAttemptAt: {
+      type: Date,
+      default: null
+    },
+
+    completedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  {
+    timestamps: true
+  }
+);
+
+const DriveSyncFile =
+  mongoose.models.DriveSyncFile ||
+  mongoose.model(
+    'DriveSyncFile',
+    driveSyncFileSchema
+  );
 
 /* =========================================================
    MODELS
@@ -1567,6 +1637,600 @@ console.log(
 
 }
 /* =========================================================
+   BATCH DRIVE SYNC
+========================================================= */
+
+const DRIVE_BATCH_SIZE = 20;
+
+let driveSyncRunning = false;
+
+
+/* ---------------------------------------------------------
+   GET SYNC COUNTS
+--------------------------------------------------------- */
+
+async function getDriveSyncCounts() {
+
+  const total =
+    await DriveSyncFile.countDocuments();
+
+  const pending =
+    await DriveSyncFile.countDocuments({
+      status: 'pending'
+    });
+
+  const processing =
+    await DriveSyncFile.countDocuments({
+      status: 'processing'
+    });
+
+  const completed =
+    await DriveSyncFile.countDocuments({
+      status: 'completed'
+    });
+
+  const failed =
+    await DriveSyncFile.countDocuments({
+      status: 'failed'
+    });
+
+  return {
+    total,
+    pending,
+    processing,
+    completed,
+    failed
+  };
+}
+
+
+/* ---------------------------------------------------------
+   REGISTER DRIVE FILES
+--------------------------------------------------------- */
+
+async function registerDriveFiles(files) {
+
+  let registered = 0;
+
+  for (const file of files) {
+
+    if (!file.id || !file.name) {
+      continue;
+    }
+
+    await DriveSyncFile.updateOne(
+      {
+        driveFileId: file.id
+      },
+      {
+        $set: {
+          fileName: file.name,
+          modifiedTime:
+            file.modifiedTime || '',
+          md5Checksum:
+            file.md5Checksum || ''
+        },
+
+        $setOnInsert: {
+          status: 'pending',
+          attempts: 0,
+          error: '',
+          completedAt: null
+        }
+      },
+      {
+        upsert: true
+      }
+    );
+
+    registered++;
+  }
+
+  console.log(
+    `📋 Registered/updated ${registered} Drive files`
+  );
+
+  return registered;
+}
+
+
+/* ---------------------------------------------------------
+   RESET STALE PROCESSING FILES
+--------------------------------------------------------- */
+
+async function resetStaleProcessingFiles() {
+
+  const staleTime =
+    new Date(Date.now() - 30 * 60 * 1000);
+
+  const result =
+    await DriveSyncFile.updateMany(
+      {
+        status: 'processing',
+        lastAttemptAt: {
+          $lt: staleTime
+        }
+      },
+      {
+        $set: {
+          status: 'pending',
+          error:
+            'Reset after stale processing state.'
+        }
+      }
+    );
+
+  if (result.modifiedCount > 0) {
+
+    console.log(
+      `♻️ Reset ${result.modifiedCount} stale processing files`
+    );
+  }
+}
+
+
+/* ---------------------------------------------------------
+   CHECK WHETHER PDF ALREADY HAS VALID EMBEDDINGS
+--------------------------------------------------------- */
+
+async function hasValidPdfEmbeddings(
+  driveFileId,
+  modifiedTime,
+  md5Checksum
+) {
+
+  const chunks =
+    await DriveChunk.find(
+      {
+        driveFileId
+      },
+      {
+        embedding: 1
+      }
+    ).lean();
+
+  if (!chunks.length) {
+    return false;
+  }
+
+  const allValid =
+    chunks.every(
+      chunk =>
+        Array.isArray(chunk.embedding) &&
+        chunk.embedding.length === 768
+    );
+
+  if (!allValid) {
+    return false;
+  }
+
+  return true;
+}
+
+
+/* ---------------------------------------------------------
+   PROCESS ONE FILE
+--------------------------------------------------------- */
+
+async function processOneDriveFile(
+  syncFile
+) {
+
+  const {
+    driveFileId,
+    fileName,
+    modifiedTime,
+    md5Checksum
+  } = syncFile;
+
+  console.log('');
+  console.log(
+    `📄 Processing: ${fileName}`
+  );
+  console.log(
+    `🆔 ${driveFileId}`
+  );
+
+  try {
+
+    /*
+     * Check existing valid embeddings.
+     */
+
+    const alreadyValid =
+      await hasValidPdfEmbeddings(
+        driveFileId,
+        modifiedTime,
+        md5Checksum
+      );
+
+    if (alreadyValid) {
+
+      console.log(
+        `⏭️ Already embedded: ${fileName}`
+      );
+
+      await DriveSyncFile.updateOne(
+        {
+          driveFileId
+        },
+        {
+          $set: {
+            status: 'completed',
+            error: '',
+            completedAt: new Date()
+          }
+        }
+      );
+
+      return {
+        success: true,
+        skipped: true
+      };
+    }
+
+
+    /*
+     * Mark processing.
+     */
+
+    await DriveSyncFile.updateOne(
+      {
+        driveFileId
+      },
+      {
+        $set: {
+          status: 'processing',
+          lastAttemptAt: new Date(),
+          error: ''
+        },
+
+        $inc: {
+          attempts: 1
+        }
+      }
+    );
+
+
+    /*
+     * Find Drive file metadata.
+     */
+
+    const file =
+      await drive.files.get({
+        fileId: driveFileId,
+        fields:
+          'id,name,mimeType,modifiedTime,md5Checksum,webViewLink'
+      });
+
+
+    if (
+      !file.data ||
+      file.data.mimeType !== 'application/pdf'
+    ) {
+
+      console.log(
+        `⏭️ Not a PDF: ${fileName}`
+      );
+
+      await DriveSyncFile.updateOne(
+        {
+          driveFileId
+        },
+        {
+          $set: {
+            status: 'completed',
+            error: 'Skipped: not a PDF.',
+            completedAt: new Date()
+          }
+        }
+      );
+
+      return {
+        success: true,
+        skipped: true
+      };
+    }
+
+
+    /*
+     * IMPORTANT:
+     * Use your existing indexDrivePdf()
+     */
+
+    await indexDrivePdf({
+      id: file.data.id,
+      name: file.data.name,
+      modifiedTime:
+        file.data.modifiedTime,
+      md5Checksum:
+        file.data.md5Checksum,
+      webViewLink:
+        file.data.webViewLink
+    });
+
+
+    /*
+     * Verify embeddings after indexing.
+     */
+
+    const verified =
+      await hasValidPdfEmbeddings(
+        driveFileId,
+        modifiedTime,
+        md5Checksum
+      );
+
+    if (!verified) {
+
+      throw new Error(
+        'PDF processed but valid 768-dimensional embeddings were not found after indexing.'
+      );
+    }
+
+
+    /*
+     * Mark completed.
+     */
+
+    await DriveSyncFile.updateOne(
+      {
+        driveFileId
+      },
+      {
+        $set: {
+          status: 'completed',
+          error: '',
+          completedAt: new Date()
+        }
+      }
+    );
+
+    console.log(
+      `✅ Completed: ${fileName}`
+    );
+
+    return {
+      success: true,
+      skipped: false
+    };
+
+  } catch (error) {
+
+    console.error(
+      `❌ Failed: ${fileName}`
+    );
+
+    console.error(
+      error.message
+    );
+
+
+    /*
+     * IMPORTANT:
+     * Do NOT delete existing chunks here.
+     * indexDrivePdf() should already protect them.
+     */
+
+    await DriveSyncFile.updateOne(
+      {
+        driveFileId
+      },
+      {
+        $set: {
+          status: 'failed',
+          error:
+            String(error.message || error)
+              .substring(0, 2000)
+        }
+      }
+    );
+
+    return {
+      success: false,
+      skipped: false,
+      error: error.message
+    };
+  }
+}
+
+
+/* ---------------------------------------------------------
+   RUN ONE BATCH
+--------------------------------------------------------- */
+
+async function runDriveBatch(
+  batchSize = DRIVE_BATCH_SIZE,
+  retryFailed = false
+) {
+
+  if (driveSyncRunning) {
+
+    throw new Error(
+      'Drive sync is already running.'
+    );
+  }
+
+  driveSyncRunning = true;
+
+  try {
+
+    await resetStaleProcessingFiles();
+
+
+    const query = retryFailed
+      ? {
+          status: 'failed'
+        }
+      : {
+          status: 'pending'
+        };
+
+
+    const files =
+      await DriveSyncFile.find(query)
+        .sort({
+          createdAt: 1
+        })
+        .limit(batchSize)
+        .lean();
+
+
+    if (!files.length) {
+
+      console.log(
+        retryFailed
+          ? '🎉 No failed files to retry.'
+          : '🎉 No pending files. Sync complete.'
+      );
+
+      return {
+        processed: 0,
+        success: 0,
+        failed: 0,
+        skipped: 0
+      };
+    }
+
+
+    console.log('');
+    console.log(
+      '=========================================='
+    );
+
+    console.log(
+      retryFailed
+        ? `🔁 RETRY BATCH: ${files.length} PDFs`
+        : `🚀 BATCH: ${files.length} PDFs`
+    );
+
+    console.log(
+      '=========================================='
+    );
+
+
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+
+
+    /*
+     * Process sequentially.
+     *
+     * DO NOT use Promise.all()
+     *
+     * This prevents Gemini embedding quota
+     * overload.
+     */
+
+    for (
+      let i = 0;
+      i < files.length;
+      i++
+    ) {
+
+      const file = files[i];
+
+      console.log('');
+      console.log(
+        `📦 Batch progress: ${i + 1}/${files.length}`
+      );
+
+
+      const result =
+        await processOneDriveFile(file);
+
+
+      if (result.success) {
+
+        success++;
+
+        if (result.skipped) {
+          skipped++;
+        }
+
+      } else {
+
+        failed++;
+      }
+
+
+      /*
+       * Small delay between PDFs.
+       * Helps reduce API pressure.
+       */
+
+      await new Promise(
+        resolve =>
+          setTimeout(resolve, 1500)
+      );
+    }
+
+
+    const counts =
+      await getDriveSyncCounts();
+
+
+    console.log('');
+    console.log(
+      '=========================================='
+    );
+
+    console.log(
+      '📊 BATCH COMPLETED'
+    );
+
+    console.log(
+      '=========================================='
+    );
+
+    console.log(
+      `Processed : ${files.length}`
+    );
+
+    console.log(
+      `Success   : ${success}`
+    );
+
+    console.log(
+      `Skipped   : ${skipped}`
+    );
+
+    console.log(
+      `Failed    : ${failed}`
+    );
+
+    console.log(
+      `Pending   : ${counts.pending}`
+    );
+
+    console.log(
+      `Completed : ${counts.completed}`
+    );
+
+    console.log(
+      `Failed DB : ${counts.failed}`
+    );
+
+    console.log(
+      '=========================================='
+    );
+
+
+    return {
+      processed: files.length,
+      success,
+      failed,
+      skipped,
+      counts
+    };
+
+  } finally {
+
+    driveSyncRunning = false;
+  }
+}
+/* =========================================================
    GOOGLE DRIVE → GEMINI → MONGODB SYNC
 ========================================================= */
 
@@ -1584,7 +2248,7 @@ async function syncGoogleDriveToGemini() {
   console.log(
     `📂 Found ${files.length} PDF file(s).`
   );
-
+await registerDriveFiles(files);
 
   let indexed = 0;
 
@@ -1940,6 +2604,214 @@ if (
 }
 
 
+
+/* =========================================================
+   BATCH SYNC API
+========================================================= */
+
+
+/*
+ * GET SYNC STATUS
+ */
+
+app.get(
+  '/admin/drive-sync/status',
+  async (req, res) => {
+
+    try {
+
+      const counts =
+        await getDriveSyncCounts();
+
+      const totalChunks =
+        await DriveChunk.countDocuments();
+
+      const validEmbeddings =
+        await DriveChunk.countDocuments({
+          embedding: {
+            $size: 768
+          }
+        });
+
+      res.json({
+        success: true,
+
+        running:
+          driveSyncRunning,
+
+        batchSize:
+          DRIVE_BATCH_SIZE,
+
+        files: counts,
+
+        chunks: {
+          total: totalChunks,
+          validEmbeddings
+        }
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Sync status error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+
+/*
+ * RUN NEXT BATCH
+ */
+
+app.post(
+  '/admin/drive-sync/batch',
+  async (req, res) => {
+
+    try {
+
+      const requestedSize =
+        Number(req.body?.batchSize) ||
+        DRIVE_BATCH_SIZE;
+
+      const batchSize =
+        Math.min(
+          Math.max(requestedSize, 1),
+          50
+        );
+
+
+      const result =
+        await runDriveBatch(
+          batchSize,
+          false
+        );
+
+
+      res.json({
+        success: true,
+        mode: 'batch',
+        result
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Batch sync error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+
+/*
+ * RETRY FAILED FILES
+ */
+
+app.post(
+  '/admin/drive-sync/retry-failed',
+  async (req, res) => {
+
+    try {
+
+      const requestedSize =
+        Number(req.body?.batchSize) ||
+        DRIVE_BATCH_SIZE;
+
+      const batchSize =
+        Math.min(
+          Math.max(requestedSize, 1),
+          50
+        );
+
+
+      const result =
+        await runDriveBatch(
+          batchSize,
+          true
+        );
+
+
+      res.json({
+        success: true,
+        mode: 'retry-failed',
+        result
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Retry failed error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+
+/*
+ * RESET FAILED FILES TO PENDING
+ *
+ * Useful if you want to process them later
+ */
+
+app.post(
+  '/admin/drive-sync/reset-failed',
+  async (req, res) => {
+
+    try {
+
+      const result =
+        await DriveSyncFile.updateMany(
+          {
+            status: 'failed'
+          },
+          {
+            $set: {
+              status: 'pending',
+              error: ''
+            }
+          }
+        );
+
+
+      res.json({
+        success: true,
+        reset:
+          result.modifiedCount
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Reset failed error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
 /* =========================================================
    MONGODB VECTOR SEARCH
 ========================================================= */
