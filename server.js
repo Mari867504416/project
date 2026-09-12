@@ -4792,29 +4792,57 @@ const sources = Array.from(uniqueSources.values());
 
         });
 
-      } catch (error) {
+     } catch (error) {
 
         console.error(
           '❌ Gemini RAG error:',
           error
         );
 
-        return res.status(500).json({
+        /*
+         * Gemini quota exceeded
+         */
 
+        if (
+          error?.status === 429 ||
+          error?.code === 429 ||
+          error?.error?.code === 429
+        ) {
+
+          return res.status(429).json({
+            success: false,
+
+            error:
+              'Gemini daily quota exceeded. Please try again after the quota resets.',
+
+            quotaExceeded: true
+          });
+        }
+
+
+        /*
+         * Other Gemini/API errors
+         */
+
+        return res.status(500).json({
           success: false,
 
           error:
-            error.message ||
-            'Gemini document search failed.'
-
+            'AI search is temporarily unavailable. Please try again later.'
         });
 
+      } finally {
+
+        /*
+         * Remove active search
+         */
+
+        activeAiSearches.delete(searchKey);
       }
 
     }
   )
 );
-
 /* =========================================================
    GLOBAL ERROR HANDLER
 ========================================================= */
