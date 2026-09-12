@@ -17,6 +17,7 @@
     "mongoose": "^7.6.5",
     "openai": "^6.0.0",
     "googleapis": "^159.0.0"
+   "@google/genai": "^1.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
