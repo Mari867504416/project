@@ -1420,7 +1420,40 @@ async function indexDrivePdf(file) {
     /* =====================================================
        INSERT NEW CHUNKS
     ===================================================== */
+console.log(
+  `🔍 Checking embeddings before MongoDB insert...`
+);
 
+newChunks.forEach((chunk, index) => {
+
+  console.log(
+    `📦 Chunk ${index + 1}: embedding = ${
+      Array.isArray(chunk.embedding)
+        ? chunk.embedding.length
+        : 'NOT ARRAY'
+    }`
+  );
+
+});
+
+const invalidChunk =
+  newChunks.findIndex(
+    chunk =>
+      !Array.isArray(chunk.embedding) ||
+      chunk.embedding.length !== 768
+  );
+
+if (invalidChunk !== -1) {
+
+  throw new Error(
+    `Invalid embedding in chunk ${invalidChunk + 1}. Expected 768 dimensions.`
+  );
+
+}
+
+console.log(
+  `✅ All ${newChunks.length} embeddings contain 768 dimensions`
+);
     console.log(
       `💾 Saving ${newChunks.length} chunks to MongoDB`
     );
@@ -1429,7 +1462,33 @@ async function indexDrivePdf(file) {
     await DriveChunk.insertMany(
       newChunks
     );
+const savedChunk =
+  await DriveChunk.findOne({
+    driveFileId: file.id
+  }).lean();
 
+console.log(
+  `🧪 MongoDB verification: embedding = ${
+    Array.isArray(savedChunk?.embedding)
+      ? savedChunk.embedding.length
+      : 'NOT ARRAY'
+  }`
+);
+
+if (
+  !savedChunk ||
+  !Array.isArray(savedChunk.embedding) ||
+  savedChunk.embedding.length !== 768
+) {
+
+  throw new Error(
+    'Embedding was not saved correctly in MongoDB.'
+  );
+}
+
+console.log(
+  `✅ MongoDB confirmed: embedding has 768 dimensions`
+);
 
     /* =====================================================
        SUCCESS
