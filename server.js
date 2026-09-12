@@ -473,8 +473,8 @@ app.post('/ai-search', asyncHandler(async (req, res) => {
     instructions: `
 You are an AI assistant for the Tamil Nadu Revenue Department.
 
-Answer questions ONLY using information found in the
-Revenue Department documents available through file search.
+Answer questions ONLY using information found in
+the Revenue Department documents available through file search.
 
 Do not invent Government Orders, Acts, Rules, dates,
 proceedings, sections or other legal information.
@@ -484,7 +484,6 @@ documents, clearly say:
 
 "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
 
-The user may ask questions in Tamil or English.
 Answer in the same language as the question.
 
 Always identify the relevant source document when possible.
@@ -495,6 +494,7 @@ Always identify the relevant source document when possible.
     tools: [
       {
         type: 'file_search',
+
         vector_store_ids: [
           process.env.OPENAI_VECTOR_STORE_ID
         ]
@@ -509,6 +509,8 @@ Always identify the relevant source document when possible.
   });
 
 }));
+
+
 /* ================= SERVER ================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
