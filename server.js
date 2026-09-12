@@ -16,6 +16,9 @@ const os = require('os');
 const pdfParse = require('pdf-parse');
 
 const app = express();
+const activeAiSearches = new Map();
+
+const AI_SEARCH_DUPLICATE_WINDOW = 5000;
 
 app.set('trust proxy', 1);
 
@@ -4466,33 +4469,57 @@ app.get(
    AI SEARCH - GEMINI RAG
 ========================================================= */
 
-app.post(
-  '/ai-search',
+app.post('/ai-search', async (req, res) => {
 
-  asyncHandler(
-    async (req, res) => {
+  const cleanQuestion =
+    String(req.body?.question || '')
+      .trim()
+      .replace(/\s+/g, ' ');
 
-      const { question } = req.body;
 
-      if (
-        !question ||
-        !question.trim()
-      ) {
-        return res.status(400).json({
-          error: 'Question is required.'
-        });
-      }
+  if (!cleanQuestion) {
 
-      if (
-        !process.env.GEMINI_API_KEY
-      ) {
-        return res.status(500).json({
-          error:
-            'GEMINI_API_KEY is not configured.'
-        });
-      }
+    return res.status(400).json({
+      success: false,
+      error: 'Question is required.'
+    });
+  }
 
-      try {
+
+  /*
+   * Create a normalized key.
+   */
+
+  const searchKey =
+    cleanQuestion.toLowerCase();
+
+
+  /*
+   * Prevent duplicate request within 5 seconds.
+   */
+
+  if (activeAiSearches.has(searchKey)) {
+
+    console.log(
+      `⏭️ Duplicate AI search ignored: "${cleanQuestion}"`
+    );
+
+    return res.status(409).json({
+      success: false,
+      duplicate: true,
+      error:
+        'Duplicate search request. Please wait for the current search to complete.'
+    });
+  }
+
+
+  activeAiSearches.set(
+    searchKey,
+    Date.now()
+  );
+
+
+  try {
 
         const cleanQuestion =
           question.trim();
