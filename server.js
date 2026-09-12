@@ -6,22 +6,26 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+
 const { GoogleGenAI } = require('@google/genai');
 const { google } = require('googleapis');
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const pdfParse = require('pdf-parse');
 
 const app = express();
 
-
 app.set('trust proxy', 1);
 
+
 /* =========================================================
-   OPENAI
+   GEMINI AI
 ========================================================= */
+
 console.log(
-  "GEMINI_API_KEY loaded:",
+  'GEMINI_API_KEY loaded:',
   !!process.env.GEMINI_API_KEY
 );
 
@@ -35,29 +39,55 @@ const gemini = new GoogleGenAI({
 ========================================================= */
 
 app.use(helmet());
+
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+
+app.use(
+  express.json({
+    limit: '2mb'
+  })
+);
 
 
-// General rate limiter
+/* =========================================================
+   GENERAL RATE LIMITER
+========================================================= */
+
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+
+  windowMs:
+    15 * 60 * 1000,
+
+  max:
+    100,
+
   message: {
-    error: 'Too many requests. Please try again later.'
+    error:
+      'Too many requests. Please try again later.'
   }
+
 });
 
 app.use(limiter);
 
 
-// Stricter limiter for login routes
+/* =========================================================
+   LOGIN RATE LIMITER
+========================================================= */
+
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+
+  windowMs:
+    15 * 60 * 1000,
+
+  max:
+    20,
+
   message: {
-    error: 'Too many login attempts. Please try again after 15 minutes.'
+    error:
+      'Too many login attempts. Please try again after 15 minutes.'
   }
+
 });
 
 
@@ -65,8 +95,14 @@ const loginLimiter = rateLimit({
    ASYNC ERROR HANDLER
 ========================================================= */
 
-const asyncHandler = fn => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler =
+  fn =>
+    (req, res, next) =>
+      Promise
+        .resolve(
+          fn(req, res, next)
+        )
+        .catch(next);
 
 
 /* =========================================================
@@ -74,15 +110,23 @@ const asyncHandler = fn => (req, res, next) =>
 ========================================================= */
 
 function isValidMobile(m) {
+
   return /^\d{10}$/.test(m);
+
 }
+
 
 function isValidUsername(u) {
+
   return /^[a-zA-Z0-9_]{4,20}$/.test(u);
+
 }
 
+
 function isValidTxnId(t) {
+
   return /^\d{12}$/.test(t);
+
 }
 
 
@@ -90,16 +134,81 @@ function isValidTxnId(t) {
    DATABASE CONNECTION
 ========================================================= */
 
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
+mongoose.connect(
+  process.env.MONGODB_URI
+)
 .then(() => {
-  console.log('✅ Connected to MongoDB');
+
+  console.log(
+    '✅ Connected to MongoDB'
+  );
+
 })
 .catch(err => {
-  console.error('❌ MongoDB connection error:', err);
+
+  console.error(
+    '❌ MongoDB connection error:',
+    err
+  );
+
 });
+
+
+/* =========================================================
+   GEMINI VECTOR CHUNK MODEL
+========================================================= */
+
+const driveChunkSchema =
+  new mongoose.Schema(
+
+    {
+
+      driveFileId: {
+        type: String,
+        required: true,
+        index: true
+      },
+
+      fileName: {
+        type: String,
+        required: true
+      },
+
+      driveUrl: {
+        type: String,
+        default: ''
+      },
+
+      chunkIndex: {
+        type: Number,
+        required: true
+      },
+
+      text: {
+        type: String,
+        required: true
+      },
+
+      embedding: {
+        type: [Number],
+        required: true
+      }
+
+    },
+
+    {
+      timestamps: true
+    }
+
+  );
+
+
+const DriveChunk =
+  mongoose.models.DriveChunk ||
+  mongoose.model(
+    'DriveChunk',
+    driveChunkSchema
+  );
 
 
 /* =========================================================
@@ -109,175 +218,302 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 /* ---------------- ADMIN ---------------- */
 
-const adminSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true,
-    unique: true
-  },
+const adminSchema =
+  new mongoose.Schema({
 
-  password: {
-    type: String,
-    required: true
-  }
-});
+    username: {
+
+      type: String,
+
+      required: true,
+
+      unique: true
+
+    },
+
+    password: {
+
+      type: String,
+
+      required: true
+
+    }
+
+  });
+
 
 const Admin =
   mongoose.models.Admin ||
-  mongoose.model('Admin', adminSchema);
+  mongoose.model(
+    'Admin',
+    adminSchema
+  );
 
 
 /* ---------------- OFFICER ---------------- */
 
-const officerSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true
-  },
+const officerSchema =
+  new mongoose.Schema({
 
-  address: {
-    type: String,
-    required: true,
-    trim: true
-  },
+    name: {
 
-  mobile: {
-    type: String,
-    required: true,
-    unique: true,
+      type: String,
 
-    validate: {
-      validator: v => /^\d{10}$/.test(v),
-      message: props =>
-        `${props.value} is not a valid 10-digit mobile number`
+      required: true,
+
+      trim: true
+
+    },
+
+    address: {
+
+      type: String,
+
+      required: true,
+
+      trim: true
+
+    },
+
+    mobile: {
+
+      type: String,
+
+      required: true,
+
+      unique: true,
+
+      validate: {
+
+        validator:
+          v =>
+            /^\d{10}$/.test(v),
+
+        message:
+          props =>
+            `${props.value} is not a valid 10-digit mobile number`
+
+      }
+
+    },
+
+    username: {
+
+      type: String,
+
+      required: true,
+
+      unique: true,
+
+      trim: true
+
+    },
+
+    password: {
+
+      type: String,
+
+      required: true
+
+    },
+
+    subscribed: {
+
+      type: Boolean,
+
+      default: false
+
+    },
+
+    transactionId: {
+
+      type: String,
+
+      unique: true,
+
+      sparse: true,
+
+      validate: {
+
+        validator:
+          v =>
+            !v ||
+            /^\d{12}$/.test(v),
+
+        message:
+          'Transaction ID must be exactly 12 digits'
+
+      }
+
+    },
+
+    subscriptionDate:
+      Date,
+
+    createdAt: {
+
+      type: Date,
+
+      default: Date.now
+
     }
-  },
 
-  username: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true
-  },
+  });
 
-  password: {
-    type: String,
-    required: true
-  },
-
-  subscribed: {
-    type: Boolean,
-    default: false
-  },
-
-  transactionId: {
-    type: String,
-    unique: true,
-    sparse: true,
-
-    validate: {
-      validator: v => !v || /^\d{12}$/.test(v),
-      message: 'Transaction ID must be exactly 12 digits'
-    }
-  },
-
-  subscriptionDate: Date,
-
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-});
 
 const Officer =
   mongoose.models.Officer ||
-  mongoose.model('Officer', officerSchema);
+  mongoose.model(
+    'Officer',
+    officerSchema
+  );
 
 
 /* ---------------- RESULT ---------------- */
 
-const resultSchema = new mongoose.Schema({
-  username: String,
-  name: String,
-  address: String,
-  score: Number,
-  total: Number,
+const resultSchema =
+  new mongoose.Schema({
 
-  date: {
-    type: Date,
-    default: Date.now
-  }
-});
+    username:
+      String,
+
+    name:
+      String,
+
+    address:
+      String,
+
+    score:
+      Number,
+
+    total:
+      Number,
+
+    date: {
+
+      type: Date,
+
+      default: Date.now
+
+    }
+
+  });
+
 
 const Result =
   mongoose.models.Result ||
-  mongoose.model('Result', resultSchema);
+  mongoose.model(
+    'Result',
+    resultSchema
+  );
 
 
 /* ---------------- TRANSFER APPLICATION ---------------- */
 
-const transferSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true
-  },
+const transferSchema =
+  new mongoose.Schema({
 
-  transferType: {
-    type: String,
-    enum: ['One Way', 'Mutual'],
-    required: true
-  },
+    username: {
 
-  applicantName: {
-    type: String,
-    required: true
-  },
+      type: String,
 
-  workingDistrict: {
-    type: String,
-    required: true
-  },
+      required: true
 
-  designation: {
-    type: String,
+    },
 
-    enum: [
-      "SRI",
-      "JRI",
-      "TYPIST",
-      "STENO TYPIST",
-      "DEPUTY TAHSILDAR",
-      "TAHSILDAR"
-    ],
+    transferType: {
 
-    required: true
-  },
+      type: String,
 
-  dateOfJoining: {
-    type: Date,
-    required: true
-  },
+      enum: [
+        'One Way',
+        'Mutual'
+      ],
 
-  option1: {
-    type: String,
-    required: true
-  },
+      required: true
 
-  option2: String,
+    },
 
-  option3: String,
+    applicantName: {
 
-  contactNumber: {
-    type: String,
-    required: true
-  },
+      type: String,
 
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-});
+      required: true
+
+    },
+
+    workingDistrict: {
+
+      type: String,
+
+      required: true
+
+    },
+
+    designation: {
+
+      type: String,
+
+      enum: [
+
+        'SRI',
+
+        'JRI',
+
+        'TYPIST',
+
+        'STENO TYPIST',
+
+        'DEPUTY TAHSILDAR',
+
+        'TAHSILDAR'
+
+      ],
+
+      required: true
+
+    },
+
+    dateOfJoining: {
+
+      type: Date,
+
+      required: true
+
+    },
+
+    option1: {
+
+      type: String,
+
+      required: true
+
+    },
+
+    option2:
+      String,
+
+    option3:
+      String,
+
+    contactNumber: {
+
+      type: String,
+
+      required: true
+
+    },
+
+    createdAt: {
+
+      type: Date,
+
+      default: Date.now
+
+    }
+
+  });
+
 
 const TransferApplication =
   mongoose.models.TransferApplication ||
@@ -288,52 +524,85 @@ const TransferApplication =
 
 
 /* =========================================================
-   GOOGLE DRIVE → OPENAI SYNC MODEL
+   GOOGLE DRIVE SYNC MODEL
 ========================================================= */
 
-const driveSyncSchema = new mongoose.Schema({
+const driveSyncSchema =
+  new mongoose.Schema({
 
-  driveFileId: {
-    type: String,
-    required: true,
-    unique: true
-  },
+    driveFileId: {
 
-  fileName: {
-    type: String,
-    required: true
-  },
+      type: String,
 
-  modifiedTime: String,
+      required: true,
 
-  md5Checksum: String,
+      unique: true
 
-  openaiFileId: String,
+    },
 
-  vectorStoreFileId: String,
+    fileName: {
 
-  status: {
-    type: String,
-    enum: [
-      'uploaded',
-      'updated',
-      'failed'
-    ],
+      type: String,
 
-    default: 'uploaded'
-  },
+      required: true
 
-  errorMessage: String,
+    },
 
-  lastSyncedAt: {
-    type: Date,
-    default: Date.now
-  }
-});
+    modifiedTime:
+      String,
+
+    md5Checksum:
+      String,
+
+    status: {
+
+      type: String,
+
+      enum: [
+
+        'indexed',
+
+        'updated',
+
+        'failed'
+
+      ],
+
+      default:
+        'indexed'
+
+    },
+
+    chunkCount: {
+
+      type: Number,
+
+      default:
+        0
+
+    },
+
+    errorMessage:
+      String,
+
+    lastSyncedAt: {
+
+      type: Date,
+
+      default:
+        Date.now
+
+    }
+
+  });
+
 
 const DriveSync =
   mongoose.models.DriveSync ||
-  mongoose.model('DriveSync', driveSyncSchema);
+  mongoose.model(
+    'DriveSync',
+    driveSyncSchema
+  );
 
 
 /* =========================================================
@@ -341,16 +610,26 @@ const DriveSync =
 ========================================================= */
 
 const ALLOWED_DESIGNATIONS = [
-  "SRI",
-  "JRI",
-  "TYPIST",
-  "STENO TYPIST",
-  "DEPUTY TAHSILDAR",
-  "TAHSILDAR"
+
+  'SRI',
+
+  'JRI',
+
+  'TYPIST',
+
+  'STENO TYPIST',
+
+  'DEPUTY TAHSILDAR',
+
+  'TAHSILDAR'
+
 ];
 
 
-// Admin password reset secret
+/* =========================================================
+   ADMIN RESET SECRET
+========================================================= */
+
 const ADMIN_RESET_SECRET =
   process.env.ADMIN_RESET_SECRET ||
   'TNGovt@Reset2025';
@@ -366,8 +645,12 @@ async function initializeAdmin() {
 
     const exists =
       await Admin.exists({
-        username: 'admin'
+
+        username:
+          'admin'
+
       });
+
 
     if (!exists) {
 
@@ -377,10 +660,17 @@ async function initializeAdmin() {
           10
         );
 
+
       await Admin.create({
-        username: 'admin',
-        password: hash
+
+        username:
+          'admin',
+
+        password:
+          hash
+
       });
+
 
       console.log(
         '✅ Default admin created'
@@ -403,47 +693,68 @@ initializeAdmin();
 
 
 /* =========================================================
-   GOOGLE DRIVE
+   GOOGLE DRIVE CLIENT
 ========================================================= */
 
 function getGoogleDriveClient() {
 
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) {
+  if (
+    !process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
+  ) {
+
     throw new Error(
       'GOOGLE_SERVICE_ACCOUNT_EMAIL is not configured.'
     );
+
   }
 
-  if (!process.env.GOOGLE_PRIVATE_KEY) {
+
+  if (
+    !process.env.GOOGLE_PRIVATE_KEY
+  ) {
+
     throw new Error(
       'GOOGLE_PRIVATE_KEY is not configured.'
     );
+
   }
 
-  const auth = new google.auth.JWT({
 
-    email:
-      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+  const auth =
+    new google.auth.JWT({
 
-    key:
-      process.env.GOOGLE_PRIVATE_KEY
-        .replace(/\\n/g, '\n'),
+      email:
+        process.env
+          .GOOGLE_SERVICE_ACCOUNT_EMAIL,
 
-    scopes: [
-      'https://www.googleapis.com/auth/drive.readonly'
-    ]
+      key:
+        process.env
+          .GOOGLE_PRIVATE_KEY
+          .replace(/\\n/g, '\n'),
 
-  });
+      scopes: [
+
+        'https://www.googleapis.com/auth/drive.readonly'
+
+      ]
+
+    });
+
 
   return google.drive({
-    version: 'v3',
+
+    version:
+      'v3',
+
     auth
+
   });
+
 }
 
 
 /* =========================================================
-   GET CHILDREN OF GOOGLE DRIVE FOLDER
+   GET DRIVE CHILDREN
 ========================================================= */
 
 async function getDriveChildren(
@@ -455,6 +766,7 @@ async function getDriveChildren(
 
   let pageToken = null;
 
+
   do {
 
     const response =
@@ -463,28 +775,37 @@ async function getDriveChildren(
         q:
           `'${folderId}' in parents and trashed = false`,
 
-        fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum)',
+        fields:
+          'nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum)',
 
-        pageSize: 100,
+        pageSize:
+          100,
 
         pageToken,
 
-        supportsAllDrives: true,
+        supportsAllDrives:
+          true,
 
-        includeItemsFromAllDrives: true
+        includeItemsFromAllDrives:
+          true
 
       });
+
 
     files.push(
       ...(response.data.files || [])
     );
 
+
     pageToken =
       response.data.nextPageToken;
 
+
   } while (pageToken);
 
+
   return files;
+
 }
 
 
@@ -497,8 +818,10 @@ async function getDrivePdfFiles() {
   const drive =
     getGoogleDriveClient();
 
+
   const rootFolderId =
     process.env.GOOGLE_DRIVE_FOLDER_ID;
+
 
   if (!rootFolderId) {
 
@@ -508,28 +831,34 @@ async function getDrivePdfFiles() {
 
   }
 
+
   const pdfFiles = [];
 
-  const foldersToProcess = [
-    rootFolderId
-  ];
+  const foldersToProcess =
+    [rootFolderId];
 
   const visitedFolders =
     new Set();
 
 
-  while (foldersToProcess.length > 0) {
+  while (
+    foldersToProcess.length > 0
+  ) {
 
     const currentFolderId =
       foldersToProcess.shift();
+
 
     if (
       visitedFolders.has(
         currentFolderId
       )
     ) {
+
       continue;
+
     }
+
 
     visitedFolders.add(
       currentFolderId
@@ -538,14 +867,18 @@ async function getDrivePdfFiles() {
 
     const children =
       await getDriveChildren(
+
         drive,
+
         currentFolderId
+
       );
 
 
-    for (const file of children) {
+    for (
+      const file of children
+    ) {
 
-      // PDF
       if (
         file.mimeType ===
         'application/pdf'
@@ -555,7 +888,6 @@ async function getDrivePdfFiles() {
 
       }
 
-      // Folder
       else if (
         file.mimeType ===
         'application/vnd.google-apps.folder'
@@ -571,7 +903,9 @@ async function getDrivePdfFiles() {
 
   }
 
+
   return pdfFiles;
+
 }
 
 
@@ -588,7 +922,6 @@ async function downloadDriveFile(
     getGoogleDriveClient();
 
 
-  // Make filename safe
   const safeName =
     fileName.replace(
       /[^a-zA-Z0-9._-]/g,
@@ -598,8 +931,11 @@ async function downloadDriveFile(
 
   const tempPath =
     path.join(
+
       os.tmpdir(),
+
       `${Date.now()}-${safeName}`
+
     );
 
 
@@ -607,13 +943,22 @@ async function downloadDriveFile(
     await drive.files.get(
 
       {
+
         fileId,
-        alt: 'media',
-        acknowledgeAbuse: true
+
+        alt:
+          'media',
+
+        acknowledgeAbuse:
+          true
+
       },
 
       {
-        responseType: 'stream'
+
+        responseType:
+          'stream'
+
       }
 
     );
@@ -629,13 +974,24 @@ async function downloadDriveFile(
 
 
       response.data
-        .on('error', reject)
+
+        .on(
+          'error',
+          reject
+        )
+
         .pipe(dest);
 
 
       dest.on(
         'finish',
-        () => resolve(tempPath)
+        () => {
+
+          resolve(
+            tempPath
+          );
+
+        }
       );
 
 
@@ -646,93 +1002,430 @@ async function downloadDriveFile(
 
     }
   );
+
 }
 
 
 /* =========================================================
-   UPLOAD PDF TO OPENAI VECTOR STORE
+   SPLIT PDF TEXT INTO CHUNKS
 ========================================================= */
 
-async function uploadFileToVectorStore(
-  filePath,
-  fileName
+function splitTextIntoChunks(
+  text,
+  chunkSize = 5000,
+  overlap = 500
 ) {
 
-  const vectorStoreId =
-    process.env.OPENAI_VECTOR_STORE_ID;
+  const cleanText =
+    text
+
+      .replace(
+        /\s+/g,
+        ' '
+      )
+
+      .trim();
 
 
-  if (!vectorStoreId) {
+  if (!cleanText) {
+
+    return [];
+
+  }
+
+
+  const chunks = [];
+
+  let start = 0;
+
+
+  while (
+    start < cleanText.length
+  ) {
+
+    const end =
+      Math.min(
+
+        start + chunkSize,
+
+        cleanText.length
+
+      );
+
+
+    const chunk =
+      cleanText.slice(
+        start,
+        end
+      );
+
+
+    chunks.push(
+      chunk
+    );
+
+
+    if (
+      end >= cleanText.length
+    ) {
+
+      break;
+
+    }
+
+
+    start =
+      end - overlap;
+
+  }
+
+
+  return chunks;
+
+}
+
+
+/* =========================================================
+   GEMINI DOCUMENT EMBEDDING
+========================================================= */
+
+async function createDocumentEmbedding(
+  text
+) {
+
+  const response =
+    await gemini.models.embedContent({
+
+      model:
+        'gemini-embedding-001',
+
+      contents:
+        text,
+
+      config: {
+
+        taskType:
+          'RETRIEVAL_DOCUMENT',
+
+        outputDimensionality:
+          768
+
+      }
+
+    });
+
+
+  if (
+    !response.embeddings ||
+    !response.embeddings[0] ||
+    !response.embeddings[0].values
+  ) {
 
     throw new Error(
-      'OPENAI_VECTOR_STORE_ID is not configured.'
+      'Gemini returned an invalid document embedding.'
     );
 
   }
 
 
-  console.log(
-    `📤 Uploading to OpenAI: ${fileName}`
-  );
-
-
-  const uploadedFile =
-    await openai.files.create({
-
-      file:
-        fs.createReadStream(
-          filePath
-        ),
-
-      purpose: 'assistants'
-
-    });
-
-
-  console.log(
-    `✅ OpenAI File ID: ${uploadedFile.id}`
-  );
-
-
-  const vectorFile =
-    await openai.vectorStores.files.create(
-
-      vectorStoreId,
-
-      {
-        file_id:
-          uploadedFile.id
-      }
-
-    );
-
-
-  console.log(
-    `📚 Vector Store File ID: ${vectorFile.id}`
-  );
-
-
-  return {
-
-    fileId:
-      uploadedFile.id,
-
-    vectorFileId:
-      vectorFile.id
-
-  };
+  return
+    response
+      .embeddings[0]
+      .values;
 
 }
 
 
 /* =========================================================
-   GOOGLE DRIVE → VECTOR STORE SYNC
+   GEMINI QUERY EMBEDDING
 ========================================================= */
 
-async function syncGoogleDriveToVectorStore() {
+async function createQueryEmbedding(
+ question
+) {
+
+  const response =
+    await gemini.models.embedContent({
+
+      model:
+        'gemini-embedding-001',
+
+      contents:
+        question,
+
+      config: {
+
+        taskType:
+          'RETRIEVAL_QUERY',
+
+        outputDimensionality:
+          768
+
+      }
+
+    });
+
+
+  if (
+    !response.embeddings ||
+    !response.embeddings[0] ||
+    !response.embeddings[0].values
+  ) {
+
+    throw new Error(
+      'Gemini returned an invalid query embedding.'
+    );
+
+  }
+
+
+  return
+    response
+      .embeddings[0]
+      .values;
+
+}
+
+
+/* =========================================================
+   INDEX ONE PDF
+========================================================= */
+
+async function indexDrivePdf(
+  file
+) {
 
   console.log(
-    '🔄 Starting Google Drive → OpenAI sync...'
+    `📄 Indexing: ${file.name}`
+  );
+
+
+  let tempPath = null;
+
+
+  try {
+
+    /*
+     * Download PDF
+     */
+
+    tempPath =
+      await downloadDriveFile(
+
+        file.id,
+
+        file.name
+
+      );
+
+
+    /*
+     * Read PDF
+     */
+
+    const pdfBuffer =
+      fs.readFileSync(
+        tempPath
+      );
+
+
+    /*
+     * Extract PDF text
+     */
+
+    const pdfData =
+      await pdfParse(
+        pdfBuffer
+      );
+
+
+    const text =
+      pdfData.text || '';
+
+
+    if (!text.trim()) {
+
+      console.log(
+        `⚠️ No text found: ${file.name}`
+      );
+
+
+      return {
+
+        success:
+          false,
+
+        reason:
+          'No text found in PDF.'
+
+      };
+
+    }
+
+
+    /*
+     * Split text
+     */
+
+    const chunks =
+      splitTextIntoChunks(
+
+        text,
+
+        5000,
+
+        500
+
+      );
+
+
+    console.log(
+      `📚 ${chunks.length} chunks created`
+    );
+
+
+    /*
+     * Delete old chunks
+     */
+
+    await DriveChunk.deleteMany({
+
+      driveFileId:
+        file.id
+
+    });
+
+
+    /*
+     * Create embeddings
+     */
+
+    for (
+      let i = 0;
+      i < chunks.length;
+      i++
+    ) {
+
+      console.log(
+
+        `🔢 Embedding chunk ${i + 1}/${chunks.length}`
+
+      );
+
+
+      const embedding =
+        await createDocumentEmbedding(
+          chunks[i]
+        );
+
+
+      await DriveChunk.create({
+
+        driveFileId:
+          file.id,
+
+        fileName:
+          file.name,
+
+        driveUrl:
+          `https://drive.google.com/file/d/${file.id}/view`,
+
+        chunkIndex:
+          i,
+
+        text:
+          chunks[i],
+
+        embedding:
+          embedding
+
+      });
+
+    }
+
+
+    console.log(
+      `✅ Indexed successfully: ${file.name}`
+    );
+
+
+    return {
+
+      success:
+        true,
+
+      chunks:
+        chunks.length
+
+    };
+
+
+  } catch (error) {
+
+    console.error(
+
+      `❌ Indexing failed: ${file.name}`,
+
+      error.message
+
+    );
+
+
+    return {
+
+      success:
+        false,
+
+      error:
+        error.message
+
+    };
+
+
+  } finally {
+
+    /*
+     * Cleanup temporary PDF
+     */
+
+    if (
+      tempPath &&
+      fs.existsSync(tempPath)
+    ) {
+
+      try {
+
+        fs.unlinkSync(
+          tempPath
+        );
+
+      } catch (cleanupError) {
+
+        console.error(
+
+          '⚠️ Temporary file cleanup failed:',
+
+          cleanupError.message
+
+        );
+
+      }
+
+    }
+
+  }
+
+}
+
+
+/* =========================================================
+   GOOGLE DRIVE → GEMINI → MONGODB SYNC
+========================================================= */
+
+async function syncGoogleDriveToGemini() {
+
+  console.log(
+    '🚀 Starting Google Drive → Gemini → MongoDB sync...'
   );
 
 
@@ -745,7 +1438,7 @@ async function syncGoogleDriveToVectorStore() {
   );
 
 
-  let uploaded = 0;
+  let indexed = 0;
 
   let updated = 0;
 
@@ -757,10 +1450,9 @@ async function syncGoogleDriveToVectorStore() {
   const details = [];
 
 
-  for (const file of files) {
-
-    let tempPath = null;
-
+  for (
+    const file of files
+  ) {
 
     try {
 
@@ -769,36 +1461,50 @@ async function syncGoogleDriveToVectorStore() {
       );
 
 
-      /*
-       * Check whether this Drive file
-       * was already synchronized.
-       */
-
       const existing =
         await DriveSync.findOne({
-          driveFileId: file.id
+
+          driveFileId:
+            file.id
+
         });
 
 
       /*
-       * If file exists and has not changed,
-       * skip upload.
+       * Skip unchanged file
        */
 
       if (
+
         existing &&
+
         existing.modifiedTime ===
           file.modifiedTime &&
+
         existing.md5Checksum ===
-          file.md5Checksum
+          file.md5Checksum &&
+
+        existing.status !==
+          'failed'
+
       ) {
 
         skipped++;
 
+
         details.push({
-          file: file.name,
-          status: 'skipped'
+
+          file:
+            file.name,
+
+          status:
+            'skipped',
+
+          chunks:
+            existing.chunkCount || 0
+
         });
+
 
         continue;
 
@@ -806,29 +1512,90 @@ async function syncGoogleDriveToVectorStore() {
 
 
       /*
-       * Download PDF
-       */
-
-      tempPath =
-        await downloadDriveFile(
-          file.id,
-          file.name
-        );
-
-
-      /*
-       * Upload to OpenAI
+       * Index PDF
        */
 
       const result =
-        await uploadFileToVectorStore(
-          tempPath,
-          file.name
+        await indexDrivePdf(
+          file
         );
 
 
+      if (
+        !result.success
+      ) {
+
+        failed++;
+
+
+        await DriveSync.findOneAndUpdate(
+
+          {
+            driveFileId:
+              file.id
+          },
+
+          {
+
+            driveFileId:
+              file.id,
+
+            fileName:
+              file.name,
+
+            modifiedTime:
+              file.modifiedTime,
+
+            md5Checksum:
+              file.md5Checksum,
+
+            status:
+              'failed',
+
+            chunkCount:
+              0,
+
+            errorMessage:
+              result.error ||
+              result.reason,
+
+            lastSyncedAt:
+              new Date()
+
+          },
+
+          {
+
+            upsert:
+              true
+
+          }
+
+        );
+
+
+        details.push({
+
+          file:
+            file.name,
+
+          status:
+            'failed',
+
+          error:
+            result.error ||
+            result.reason
+
+        });
+
+
+        continue;
+
+      }
+
+
       /*
-       * Save synchronization information
+       * Save sync status
        */
 
       await DriveSync.findOneAndUpdate(
@@ -852,16 +1619,13 @@ async function syncGoogleDriveToVectorStore() {
           md5Checksum:
             file.md5Checksum,
 
-          openaiFileId:
-            result.fileId,
-
-          vectorStoreFileId:
-            result.vectorFileId,
-
           status:
             existing
               ? 'updated'
-              : 'uploaded',
+              : 'indexed',
+
+          chunkCount:
+            result.chunks,
 
           errorMessage:
             null,
@@ -872,8 +1636,13 @@ async function syncGoogleDriveToVectorStore() {
         },
 
         {
-          upsert: true,
-          new: true
+
+          upsert:
+            true,
+
+          new:
+            true
+
         }
 
       );
@@ -883,21 +1652,27 @@ async function syncGoogleDriveToVectorStore() {
 
         updated++;
 
-        details.push({
-          file: file.name,
-          status: 'updated'
-        });
-
       } else {
 
-        uploaded++;
-
-        details.push({
-          file: file.name,
-          status: 'uploaded'
-        });
+        indexed++;
 
       }
+
+
+      details.push({
+
+        file:
+          file.name,
+
+        status:
+          existing
+            ? 'updated'
+            : 'indexed',
+
+        chunks:
+          result.chunks
+
+      });
 
 
     } catch (error) {
@@ -906,80 +1681,26 @@ async function syncGoogleDriveToVectorStore() {
 
 
       console.error(
+
         `❌ Failed: ${file.name}`,
+
         error.message
-      );
-
-
-      await DriveSync.findOneAndUpdate(
-
-        {
-          driveFileId:
-            file.id
-        },
-
-        {
-
-          driveFileId:
-            file.id,
-
-          fileName:
-            file.name,
-
-          modifiedTime:
-            file.modifiedTime,
-
-          md5Checksum:
-            file.md5Checksum,
-
-          status:
-            'failed',
-
-          errorMessage:
-            error.message,
-
-          lastSyncedAt:
-            new Date()
-
-        },
-
-        {
-          upsert: true
-        }
 
       );
 
 
       details.push({
-        file: file.name,
-        status: 'failed',
-        error: error.message
+
+        file:
+          file.name,
+
+        status:
+          'failed',
+
+        error:
+          error.message
+
       });
-
-
-    } finally {
-
-      if (
-        tempPath &&
-        fs.existsSync(tempPath)
-      ) {
-
-        try {
-
-          fs.unlinkSync(
-            tempPath
-          );
-
-        } catch (cleanupError) {
-
-          console.error(
-            'Temporary file cleanup error:',
-            cleanupError.message
-          );
-
-        }
-
-      }
 
     }
 
@@ -991,7 +1712,7 @@ async function syncGoogleDriveToVectorStore() {
   );
 
   console.log(
-    'Google Drive sync completed'
+    'Google Drive → Gemini sync completed'
   );
 
   console.log(
@@ -999,7 +1720,7 @@ async function syncGoogleDriveToVectorStore() {
   );
 
   console.log(
-    `Uploaded: ${uploaded}`
+    `Indexed : ${indexed}`
   );
 
   console.log(
@@ -1024,7 +1745,7 @@ async function syncGoogleDriveToVectorStore() {
     total:
       files.length,
 
-    uploaded,
+    indexed,
 
     updated,
 
@@ -1040,8 +1761,85 @@ async function syncGoogleDriveToVectorStore() {
 
 
 /* =========================================================
-   ROUTES
+   MONGODB VECTOR SEARCH
 ========================================================= */
+
+async function searchRelevantChunks(
+  question,
+  limit = 5
+) {
+
+  const queryEmbedding =
+    await createQueryEmbedding(
+      question
+    );
+
+
+  const results =
+    await DriveChunk.aggregate([
+
+      {
+
+        $vectorSearch: {
+
+          index:
+            'revenue_vector_index',
+
+          path:
+            'embedding',
+
+          queryVector:
+            queryEmbedding,
+
+          numCandidates:
+            Math.max(
+              100,
+              limit * 20
+            ),
+
+          limit:
+            limit
+
+        }
+
+      },
+
+      {
+
+        $project: {
+
+          _id:
+            0,
+
+          fileName:
+            1,
+
+          driveUrl:
+            1,
+
+          chunkIndex:
+            1,
+
+          text:
+            1,
+
+          score: {
+
+            $meta:
+              'vectorSearchScore'
+
+          }
+
+        }
+
+      }
+
+    ]);
+
+
+  return results;
+
+}
 
 
 /* =========================================================
@@ -1053,8 +1851,16 @@ app.get(
   (req, res) => {
 
     res.json({
+
       status:
-        'TN Govt Servant Portal API running ✅'
+        'TN Govt Servant Portal API running ✅',
+
+      ai:
+        'Gemini RAG',
+
+      database:
+        'MongoDB'
+
     });
 
   }
@@ -1062,1008 +1868,1304 @@ app.get(
 
 
 /* =========================================================
-   AUTH ROUTES
+   ADMIN LOGIN
 ========================================================= */
-
-
-/* ---------- ADMIN LOGIN ---------- */
 
 app.post(
   '/admin/login',
+
   loginLimiter,
-  asyncHandler(async (req, res) => {
 
-    const {
-      username,
-      password
-    } = req.body;
+  asyncHandler(
+    async (req, res) => {
 
-
-    if (!username || !password) {
-
-      return res.status(400).json({
-        error:
-          'Username and password required.'
-      });
-
-    }
-
-
-    const admin =
-      await Admin.findOne({
-        username
-      });
-
-
-    if (
-      !admin ||
-      !(await bcrypt.compare(
-        password,
-        admin.password
-      ))
-    ) {
-
-      return res.status(401).json({
-        error:
-          'Invalid credentials.'
-      });
-
-    }
-
-
-    res.json({
-      message:
-        'Admin login successful'
-    });
-
-  })
-);
-
-
-/* ---------- ADMIN RESET PASSWORD ---------- */
-
-app.post(
-  '/admin/reset-password',
-  asyncHandler(async (req, res) => {
-
-    const {
-      secretCode,
-      password
-    } = req.body;
-
-
-    if (!secretCode || !password) {
-
-      return res.status(400).json({
-        error:
-          'Secret code and new password required.'
-      });
-
-    }
-
-
-    if (
-      secretCode !==
-      ADMIN_RESET_SECRET
-    ) {
-
-      return res.status(403).json({
-        error:
-          'Invalid secret code.'
-      });
-
-    }
-
-
-    if (password.length < 8) {
-
-      return res.status(400).json({
-        error:
-          'Password must be at least 8 characters.'
-      });
-
-    }
-
-
-    const hash =
-      await bcrypt.hash(
-        password,
-        10
-      );
-
-
-    await Admin.updateOne(
-
-      {
-        username: 'admin'
-      },
-
-      {
-        password: hash
-      }
-
-    );
-
-
-    res.json({
-      message:
-        'Admin password reset successfully.'
-    });
-
-  })
-);
-
-
-/* ---------- OFFICER LOGIN ---------- */
-
-app.post(
-  '/login',
-  loginLimiter,
-  asyncHandler(async (req, res) => {
-
-    const {
-      username,
-      password
-    } = req.body;
-
-
-    if (!username || !password) {
-
-      return res.status(400).json({
-        error:
-          'Username and password required.'
-      });
-
-    }
-
-
-    const officer =
-      await Officer.findOne({
-        username
-      });
-
-
-    if (
-      !officer ||
-      !(await bcrypt.compare(
-        password,
-        officer.password
-      ))
-    ) {
-
-      return res.status(401).json({
-        error:
-          'Invalid credentials.'
-      });
-
-    }
-
-
-    const obj =
-      officer.toObject();
-
-
-    delete obj.password;
-
-
-    res.json({
-
-      message:
-        'Login successful',
-
-      officer:
-        obj,
-
-      subscribed:
-        officer.subscribed
-
-    });
-
-  })
-);
-
-
-/* ---------- OFFICER SIGNUP ---------- */
-
-app.post(
-  '/signup',
-  asyncHandler(async (req, res) => {
-
-    const {
-      name,
-      address,
-      mobile,
-      username,
-      password
-    } = req.body;
-
-
-    if (
-      !name ||
-      !address ||
-      !mobile ||
-      !username ||
-      !password
-    ) {
-
-      return res.status(400).json({
-        error:
-          'All fields are required.'
-      });
-
-    }
-
-
-    if (!isValidMobile(mobile)) {
-
-      return res.status(400).json({
-        error:
-          'Mobile must be exactly 10 digits.'
-      });
-
-    }
-
-
-    if (!isValidUsername(username)) {
-
-      return res.status(400).json({
-        error:
-          'Username: 4-20 chars, letters/numbers/underscore only.'
-      });
-
-    }
-
-
-    if (password.length < 8) {
-
-      return res.status(400).json({
-        error:
-          'Password must be at least 8 characters.'
-      });
-
-    }
-
-
-    const existingUser =
-      await Officer.findOne({
-
-        $or: [
-          { username },
-          { mobile }
-        ]
-
-      });
-
-
-    if (existingUser) {
-
-      if (
-        existingUser.username ===
-        username
-      ) {
-
-        return res.status(409).json({
-          error:
-            'Username already taken.'
-        });
-
-      }
-
-
-      if (
-        existingUser.mobile ===
-        mobile
-      ) {
-
-        return res.status(409).json({
-          error:
-            'Mobile number already registered.'
-        });
-
-      }
-
-    }
-
-
-    const hash =
-      await bcrypt.hash(
-        password,
-        10
-      );
-
-
-    const officer =
-      await Officer.create({
-
-        name,
-        address,
-        mobile,
+      const {
         username,
-        password: hash
+        password
+      } = req.body;
 
-      });
-
-
-    const obj =
-      officer.toObject();
-
-
-    delete obj.password;
-
-
-    res.json({
-
-      message:
-        'Officer registered successfully.',
-
-      officer:
-        obj
-
-    });
-
-  })
-);
-
-
-/* ---------- OFFICER RESET PASSWORD ---------- */
-
-app.post(
-  '/officer/reset-password',
-  asyncHandler(async (req, res) => {
-
-    const {
-      username,
-      mobile,
-      password
-    } = req.body;
-
-
-    if (
-      !username ||
-      !mobile ||
-      !password
-    ) {
-
-      return res.status(400).json({
-        error:
-          'All fields required.'
-      });
-
-    }
-
-
-    if (!isValidMobile(mobile)) {
-
-      return res.status(400).json({
-        error:
-          'Invalid mobile number.'
-      });
-
-    }
-
-
-    if (password.length < 8) {
-
-      return res.status(400).json({
-        error:
-          'Password must be at least 8 characters.'
-      });
-
-    }
-
-
-    const officer =
-      await Officer.findOne({
-        username,
-        mobile
-      });
-
-
-    if (!officer) {
-
-      return res.status(404).json({
-        error:
-          'No officer found with this username and mobile.'
-      });
-
-    }
-
-
-    officer.password =
-      await bcrypt.hash(
-        password,
-        10
-      );
-
-
-    await officer.save();
-
-
-    res.json({
-      message:
-        'Password reset successfully.'
-    });
-
-  })
-);
-
-
-/* =========================================================
-   SUBSCRIPTION ROUTES
-========================================================= */
-
-
-/* ---------- SUBMIT TRANSACTION ---------- */
-
-app.post(
-  '/submit-transaction',
-  asyncHandler(async (req, res) => {
-
-    const {
-      username,
-      transactionId
-    } = req.body;
-
-
-    if (
-      !username ||
-      !transactionId
-    ) {
-
-      return res.status(400).json({
-        error:
-          'Username and Transaction ID required.'
-      });
-
-    }
-
-
-    if (
-      !isValidTxnId(
-        transactionId
-      )
-    ) {
-
-      return res.status(400).json({
-        error:
-          'Transaction ID must be exactly 12 digits.'
-      });
-
-    }
-
-
-    const existing =
-      await Officer.findOne({
-        transactionId
-      });
-
-
-    if (
-      existing &&
-      existing.username !== username
-    ) {
-
-      return res.status(409).json({
-        error:
-          'This Transaction ID is already registered.'
-      });
-
-    }
-
-
-    const officer =
-      await Officer.findOneAndUpdate(
-
-        {
-          username
-        },
-
-        {
-          transactionId,
-          subscribed: false
-        },
-
-        {
-          new: true
-        }
-
-      );
-
-
-    if (!officer) {
-
-      return res.status(404).json({
-        error:
-          'Officer not found.'
-      });
-
-    }
-
-
-    res.json({
-      message:
-        'Transaction ID submitted successfully. Awaiting admin approval.'
-    });
-
-  })
-);
-
-
-/* ---------- OFFICER STATUS ---------- */
-
-app.post(
-  '/officer/status',
-  asyncHandler(async (req, res) => {
-
-    const officer =
-      await Officer.findOne({
-        username:
-          req.body.username
-      });
-
-
-    if (!officer) {
-
-      return res.status(404).json({
-        error:
-          'Officer not found.'
-      });
-
-    }
-
-
-    res.json({
-      activated:
-        officer.subscribed
-    });
-
-  })
-);
-
-
-/* =========================================================
-   ADMIN ROUTES
-========================================================= */
-
-
-/* ---------- GET ALL OFFICERS ---------- */
-
-app.get(
-  '/admin/officers',
-  asyncHandler(async (req, res) => {
-
-    const officers =
-      await Officer.find(
-        {},
-        {
-          password: 0
-        }
-      ).sort({
-        createdAt: -1
-      });
-
-
-    res.json(
-      officers
-    );
-
-  })
-);
-
-
-/* ---------- ACTIVATE SUBSCRIPTION ---------- */
-
-app.post(
-  '/admin/activate',
-  asyncHandler(async (req, res) => {
-
-    const {
-      transactionId
-    } = req.body;
-
-
-    if (
-      !isValidTxnId(
-        transactionId
-      )
-    ) {
-
-      return res.status(400).json({
-        error:
-          'Transaction ID must be 12 digits.'
-      });
-
-    }
-
-
-    const officer =
-      await Officer.findOne({
-        transactionId
-      });
-
-
-    if (!officer) {
-
-      return res.status(404).json({
-        error:
-          'No officer found with this Transaction ID.'
-      });
-
-    }
-
-
-    if (officer.subscribed) {
-
-      return res.status(409).json({
-        error:
-          'This officer is already activated.'
-      });
-
-    }
-
-
-    officer.subscribed =
-      true;
-
-    officer.subscriptionDate =
-      new Date();
-
-
-    await officer.save();
-
-
-    res.json({
-      message:
-        `Subscription activated for ${officer.name} (${officer.username}).`
-    });
-
-  })
-);
-
-
-/* ---------- EDIT OFFICER ---------- */
-
-app.post(
-  '/admin/officer/update',
-  asyncHandler(async (req, res) => {
-
-    const {
-      username,
-      name,
-      address,
-      mobile
-    } = req.body;
-
-
-    if (!username) {
-
-      return res.status(400).json({
-        error:
-          'Username required to identify officer.'
-      });
-
-    }
-
-
-    if (
-      !name ||
-      name.trim().length === 0
-    ) {
-
-      return res.status(400).json({
-        error:
-          'Name cannot be empty.'
-      });
-
-    }
-
-
-    if (!isValidMobile(mobile)) {
-
-      return res.status(400).json({
-        error:
-          'Mobile must be exactly 10 digits.'
-      });
-
-    }
-
-
-    const conflict =
-      await Officer.findOne({
-
-        mobile,
-
-        username: {
-          $ne: username
-        }
-
-      });
-
-
-    if (conflict) {
-
-      return res.status(409).json({
-        error:
-          'This mobile number is used by another officer.'
-      });
-
-    }
-
-
-    const officer =
-      await Officer.findOneAndUpdate(
-
-        {
-          username
-        },
-
-        {
-          name:
-            name.trim(),
-
-          address:
-            (address || '').trim(),
-
-          mobile
-
-        },
-
-        {
-          new: true,
-          runValidators: true
-        }
-
-      );
-
-
-    if (!officer) {
-
-      return res.status(404).json({
-        error:
-          'Officer not found.'
-      });
-
-    }
-
-
-    const obj =
-      officer.toObject();
-
-
-    delete obj.password;
-
-
-    res.json({
-
-      message:
-        'Officer details updated successfully.',
-
-      officer:
-        obj
-
-    });
-
-  })
-);
-
-
-/* ---------- DELETE OFFICER ---------- */
-
-app.post(
-  '/admin/officer/delete',
-  asyncHandler(async (req, res) => {
-
-    const {
-      username
-    } = req.body;
-
-
-    if (!username) {
-
-      return res.status(400).json({
-        error:
-          'Username required.'
-      });
-
-    }
-
-
-    const officer =
-      await Officer.findOneAndDelete({
-        username
-      });
-
-
-    if (!officer) {
-
-      return res.status(404).json({
-        error:
-          'Officer not found.'
-      });
-
-    }
-
-
-    res.json({
-      message:
-        `Officer "${username}" deleted successfully.`
-    });
-
-  })
-);
-
-
-/* =========================================================
-   RESULT ROUTES
-========================================================= */
-
-
-/* ---------- SUBMIT RESULT ---------- */
-
-app.post(
-  '/submit-result',
-  asyncHandler(async (req, res) => {
-
-    const {
-      username,
-      name,
-      address,
-      score,
-      total
-    } = req.body;
-
-
-    if (
-      !username ||
-      score === undefined ||
-      total === undefined
-    ) {
-
-      return res.status(400).json({
-        error:
-          'username, score, and total are required.'
-      });
-
-    }
-
-
-    await Result.create({
-
-      username,
-      name,
-      address,
-      score,
-      total
-
-    });
-
-
-    res.json({
-      message:
-        'Result submitted successfully.'
-    });
-
-  })
-);
-
-
-/* ---------- GET RESULTS ---------- */
-
-app.get(
-  '/get-results',
-  asyncHandler(async (req, res) => {
-
-    const list =
-      await Result.find()
-        .sort({
-          date: -1
-        });
-
-
-    res.json(
-      list
-    );
-
-  })
-);
-
-
-/* =========================================================
-   TRANSFER ROUTES
-========================================================= */
-
-
-/* ---------- APPLY TRANSFER ---------- */
-
-app.post(
-  '/transfer/apply',
-  asyncHandler(async (req, res) => {
-
-    const designation =
-      req.body.designation
-        ?.trim()
-        .toUpperCase();
-
-
-    if (
-      !ALLOWED_DESIGNATIONS
-        .includes(
-          designation
-        )
-    ) {
-
-      return res.status(400).json({
-
-        error:
-          `Invalid designation. Allowed: ${ALLOWED_DESIGNATIONS.join(', ')}`
-
-      });
-
-    }
-
-
-    const required = [
-
-      'username',
-
-      'transferType',
-
-      'applicantName',
-
-      'workingDistrict',
-
-      'dateOfJoining',
-
-      'option1',
-
-      'contactNumber'
-
-    ];
-
-
-    for (
-      const field of required
-    ) {
 
       if (
-        !req.body[field]
+        !username ||
+        !password
       ) {
 
         return res.status(400).json({
+
           error:
-            `${field} is required.`
+            'Username and password required.'
+
         });
 
       }
 
+
+      const admin =
+        await Admin.findOne({
+
+          username
+
+        });
+
+
+      if (
+        !admin ||
+        !(await bcrypt.compare(
+
+          password,
+
+          admin.password
+
+        ))
+
+      ) {
+
+        return res.status(401).json({
+
+          error:
+            'Invalid credentials.'
+
+        });
+
+      }
+
+
+      res.json({
+
+        message:
+          'Admin login successful'
+
+      });
+
     }
 
+  )
 
-    const application =
-      await TransferApplication.create({
+);
 
-        ...req.body,
 
-        designation
+/* =========================================================
+   ADMIN RESET PASSWORD
+========================================================= */
+
+app.post(
+  '/admin/reset-password',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+        secretCode,
+        password
+      } = req.body;
+
+
+      if (
+        !secretCode ||
+        !password
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Secret code and new password required.'
+
+        });
+
+      }
+
+
+      if (
+        secretCode !==
+        ADMIN_RESET_SECRET
+      ) {
+
+        return res.status(403).json({
+
+          error:
+            'Invalid secret code.'
+
+        });
+
+      }
+
+
+      if (
+        password.length < 8
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Password must be at least 8 characters.'
+
+        });
+
+      }
+
+
+      const hash =
+        await bcrypt.hash(
+          password,
+          10
+        );
+
+
+      await Admin.updateOne(
+
+        {
+          username:
+            'admin'
+        },
+
+        {
+
+          password:
+            hash
+
+        }
+
+      );
+
+
+      res.json({
+
+        message:
+          'Admin password reset successfully.'
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   OFFICER LOGIN
+========================================================= */
+
+app.post(
+  '/login',
+
+  loginLimiter,
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+        username,
+        password
+      } = req.body;
+
+
+      if (
+        !username ||
+        !password
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Username and password required.'
+
+        });
+
+      }
+
+
+      const officer =
+        await Officer.findOne({
+
+          username
+
+        });
+
+
+      if (
+        !officer ||
+        !(await bcrypt.compare(
+
+          password,
+
+          officer.password
+
+        ))
+
+      ) {
+
+        return res.status(401).json({
+
+          error:
+            'Invalid credentials.'
+
+        });
+
+      }
+
+
+      const obj =
+        officer.toObject();
+
+
+      delete obj.password;
+
+
+      res.json({
+
+        message:
+          'Login successful',
+
+        officer:
+          obj,
+
+        subscribed:
+          officer.subscribed
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   OFFICER SIGNUP
+========================================================= */
+
+app.post(
+  '/signup',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+
+        name,
+
+        address,
+
+        mobile,
+
+        username,
+
+        password
+
+      } = req.body;
+
+
+      if (
+
+        !name ||
+
+        !address ||
+
+        !mobile ||
+
+        !username ||
+
+        !password
+
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'All fields are required.'
+
+        });
+
+      }
+
+
+      if (
+        !isValidMobile(mobile)
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Mobile must be exactly 10 digits.'
+
+        });
+
+      }
+
+
+      if (
+        !isValidUsername(username)
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Username: 4-20 chars, letters/numbers/underscore only.'
+
+        });
+
+      }
+
+
+      if (
+        password.length < 8
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Password must be at least 8 characters.'
+
+        });
+
+      }
+
+
+      const existingUser =
+        await Officer.findOne({
+
+          $or: [
+
+            {
+              username
+            },
+
+            {
+              mobile
+            }
+
+          ]
+
+        });
+
+
+      if (existingUser) {
+
+        if (
+          existingUser.username ===
+          username
+        ) {
+
+          return res.status(409).json({
+
+            error:
+              'Username already taken.'
+
+          });
+
+        }
+
+
+        if (
+          existingUser.mobile ===
+          mobile
+        ) {
+
+          return res.status(409).json({
+
+            error:
+              'Mobile number already registered.'
+
+          });
+
+        }
+
+      }
+
+
+      const hash =
+        await bcrypt.hash(
+          password,
+          10
+        );
+
+
+      const officer =
+        await Officer.create({
+
+          name,
+
+          address,
+
+          mobile,
+
+          username,
+
+          password:
+            hash
+
+        });
+
+
+      const obj =
+        officer.toObject();
+
+
+      delete obj.password;
+
+
+      res.json({
+
+        message:
+          'Officer registered successfully.',
+
+        officer:
+          obj
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   OFFICER RESET PASSWORD
+========================================================= */
+
+app.post(
+  '/officer/reset-password',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+
+        username,
+
+        mobile,
+
+        password
+
+      } = req.body;
+
+
+      if (
+
+        !username ||
+
+        !mobile ||
+
+        !password
+
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'All fields required.'
+
+        });
+
+      }
+
+
+      if (
+        !isValidMobile(mobile)
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Invalid mobile number.'
+
+        });
+
+      }
+
+
+      if (
+        password.length < 8
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Password must be at least 8 characters.'
+
+        });
+
+      }
+
+
+      const officer =
+        await Officer.findOne({
+
+          username,
+
+          mobile
+
+        });
+
+
+      if (!officer) {
+
+        return res.status(404).json({
+
+          error:
+            'No officer found with this username and mobile.'
+
+        });
+
+      }
+
+
+      officer.password =
+        await bcrypt.hash(
+          password,
+          10
+        );
+
+
+      await officer.save();
+
+
+      res.json({
+
+        message:
+          'Password reset successfully.'
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   SUBMIT TRANSACTION
+========================================================= */
+
+app.post(
+  '/submit-transaction',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+
+        username,
+
+        transactionId
+
+      } = req.body;
+
+
+      if (
+        !username ||
+        !transactionId
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Username and Transaction ID required.'
+
+        });
+
+      }
+
+
+      if (
+        !isValidTxnId(
+          transactionId
+        )
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Transaction ID must be exactly 12 digits.'
+
+        });
+
+      }
+
+
+      const existing =
+        await Officer.findOne({
+
+          transactionId
+
+        });
+
+
+      if (
+
+        existing &&
+
+        existing.username !==
+          username
+
+      ) {
+
+        return res.status(409).json({
+
+          error:
+            'This Transaction ID is already registered.'
+
+        });
+
+      }
+
+
+      const officer =
+        await Officer.findOneAndUpdate(
+
+          {
+            username
+          },
+
+          {
+
+            transactionId,
+
+            subscribed:
+              false
+
+          },
+
+          {
+            new:
+              true
+          }
+
+        );
+
+
+      if (!officer) {
+
+        return res.status(404).json({
+
+          error:
+            'Officer not found.'
+
+        });
+
+      }
+
+
+      res.json({
+
+        message:
+          'Transaction ID submitted successfully. Awaiting admin approval.'
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   OFFICER STATUS
+========================================================= */
+
+app.post(
+  '/officer/status',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const officer =
+        await Officer.findOne({
+
+          username:
+            req.body.username
+
+        });
+
+
+      if (!officer) {
+
+        return res.status(404).json({
+
+          error:
+            'Officer not found.'
+
+        });
+
+      }
+
+
+      res.json({
+
+        activated:
+          officer.subscribed
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   GET ALL OFFICERS
+========================================================= */
+
+app.get(
+  '/admin/officers',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const officers =
+        await Officer.find(
+
+          {},
+
+          {
+            password:
+              0
+          }
+
+        )
+        .sort({
+
+          createdAt:
+            -1
+
+        });
+
+
+      res.json(
+        officers
+      );
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   ACTIVATE SUBSCRIPTION
+========================================================= */
+
+app.post(
+  '/admin/activate',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+        transactionId
+      } = req.body;
+
+
+      if (
+        !isValidTxnId(
+          transactionId
+        )
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Transaction ID must be 12 digits.'
+
+        });
+
+      }
+
+
+      const officer =
+        await Officer.findOne({
+
+          transactionId
+
+        });
+
+
+      if (!officer) {
+
+        return res.status(404).json({
+
+          error:
+            'No officer found with this Transaction ID.'
+
+        });
+
+      }
+
+
+      if (
+        officer.subscribed
+      ) {
+
+        return res.status(409).json({
+
+          error:
+            'This officer is already activated.'
+
+        });
+
+      }
+
+
+      officer.subscribed =
+        true;
+
+
+      officer.subscriptionDate =
+        new Date();
+
+
+      await officer.save();
+
+
+      res.json({
+
+        message:
+          `Subscription activated for ${officer.name} (${officer.username}).`
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   EDIT OFFICER
+========================================================= */
+
+app.post(
+  '/admin/officer/update',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+
+        username,
+
+        name,
+
+        address,
+
+        mobile
+
+      } = req.body;
+
+
+      if (!username) {
+
+        return res.status(400).json({
+
+          error:
+            'Username required to identify officer.'
+
+        });
+
+      }
+
+
+      if (
+        !name ||
+        name.trim().length === 0
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Name cannot be empty.'
+
+        });
+
+      }
+
+
+      if (
+        !isValidMobile(mobile)
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'Mobile must be exactly 10 digits.'
+
+        });
+
+      }
+
+
+      const conflict =
+        await Officer.findOne({
+
+          mobile,
+
+          username: {
+
+            $ne:
+              username
+
+          }
+
+        });
+
+
+      if (conflict) {
+
+        return res.status(409).json({
+
+          error:
+            'This mobile number is used by another officer.'
+
+        });
+
+      }
+
+
+      const officer =
+        await Officer.findOneAndUpdate(
+
+          {
+            username
+          },
+
+          {
+
+            name:
+              name.trim(),
+
+            address:
+              (address || '').trim(),
+
+            mobile
+
+          },
+
+          {
+
+            new:
+              true,
+
+            runValidators:
+              true
+
+          }
+
+        );
+
+
+      if (!officer) {
+
+        return res.status(404).json({
+
+          error:
+            'Officer not found.'
+
+        });
+
+      }
+
+
+      const obj =
+        officer.toObject();
+
+
+      delete obj.password;
+
+
+      res.json({
+
+        message:
+          'Officer details updated successfully.',
+
+        officer:
+          obj
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   DELETE OFFICER
+========================================================= */
+
+app.post(
+  '/admin/officer/delete',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+        username
+      } = req.body;
+
+
+      if (!username) {
+
+        return res.status(400).json({
+
+          error:
+            'Username required.'
+
+        });
+
+      }
+
+
+      const officer =
+        await Officer.findOneAndDelete({
+
+          username
+
+        });
+
+
+      if (!officer) {
+
+        return res.status(404).json({
+
+          error:
+            'Officer not found.'
+
+        });
+
+      }
+
+
+      res.json({
+
+        message:
+          `Officer "${username}" deleted successfully.`
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   SUBMIT RESULT
+========================================================= */
+
+app.post(
+  '/submit-result',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const {
+
+        username,
+
+        name,
+
+        address,
+
+        score,
+
+        total
+
+      } = req.body;
+
+
+      if (
+
+        !username ||
+
+        score === undefined ||
+
+        total === undefined
+
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            'username, score, and total are required.'
+
+        });
+
+      }
+
+
+      await Result.create({
+
+        username,
+
+        name,
+
+        address,
+
+        score,
+
+        total
 
       });
 
 
-    res.json({
+      res.json({
 
-      message:
-        'Transfer application submitted successfully.',
+        message:
+          'Result submitted successfully.'
 
-      id:
-        application._id
+      });
 
-    });
+    }
 
-  })
+  )
+
 );
 
 
-/* ---------- TRANSFER LIST HELPER ---------- */
+/* =========================================================
+   GET RESULTS
+========================================================= */
+
+app.get(
+  '/get-results',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const list =
+        await Result.find()
+          .sort({
+
+            date:
+              -1
+
+          });
+
+
+      res.json(
+        list
+      );
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   APPLY TRANSFER
+========================================================= */
+
+app.post(
+  '/transfer/apply',
+
+  asyncHandler(
+    async (req, res) => {
+
+      const designation =
+        req.body.designation
+          ?.trim()
+          .toUpperCase();
+
+
+      if (
+        !ALLOWED_DESIGNATIONS.includes(
+          designation
+        )
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            `Invalid designation. Allowed: ${ALLOWED_DESIGNATIONS.join(', ')}`
+
+        });
+
+      }
+
+
+      const required = [
+
+        'username',
+
+        'transferType',
+
+        'applicantName',
+
+        'workingDistrict',
+
+        'dateOfJoining',
+
+        'option1',
+
+        'contactNumber'
+
+      ];
+
+
+      for (
+        const field of required
+      ) {
+
+        if (
+          !req.body[field]
+        ) {
+
+          return res.status(400).json({
+
+            error:
+              `${field} is required.`
+
+          });
+
+        }
+
+      }
+
+
+      const application =
+        await TransferApplication.create({
+
+          ...req.body,
+
+          designation
+
+        });
+
+
+      res.json({
+
+        message:
+          'Transfer application submitted successfully.',
+
+        id:
+          application._id
+
+      });
+
+    }
+
+  )
+
+);
+
+
+/* =========================================================
+   TRANSFER LIST HELPER
+========================================================= */
 
 const transferList =
   designation =>
@@ -2082,7 +3184,10 @@ const transferList =
           await TransferApplication
             .find(filter)
             .sort({
-              createdAt: -1
+
+              createdAt:
+                -1
+
             });
 
 
@@ -2131,7 +3236,7 @@ app.get(
 
 
 /* =========================================================
-   GOOGLE DRIVE ADMIN SYNC
+   ADMIN - GOOGLE DRIVE → GEMINI SYNC
 ========================================================= */
 
 app.post(
@@ -2139,10 +3244,6 @@ app.post(
 
   asyncHandler(
     async (req, res) => {
-
-      /*
-       * Protect the synchronization endpoint.
-       */
 
       const suppliedSecret =
         req.headers[
@@ -2157,7 +3258,7 @@ app.post(
         return res.status(500).json({
 
           error:
-            'DRIVE_SYNC_SECRET is not configured on the server.'
+            'DRIVE_SYNC_SECRET is not configured.'
 
         });
 
@@ -2165,9 +3266,12 @@ app.post(
 
 
       if (
+
         !suppliedSecret ||
+
         suppliedSecret !==
           process.env.DRIVE_SYNC_SECRET
+
       ) {
 
         return res.status(403).json({
@@ -2181,7 +3285,7 @@ app.post(
 
 
       const result =
-        await syncGoogleDriveToVectorStore();
+        await syncGoogleDriveToGemini();
 
 
       res.json({
@@ -2190,102 +3294,136 @@ app.post(
           true,
 
         message:
-          'Google Drive sync completed.',
+          'Google Drive → Gemini → MongoDB sync completed.',
 
         result
 
       });
 
     }
+
   )
+
 );
 
 
 /* =========================================================
-   GOOGLE DRIVE SYNC STATUS
+   ADMIN - SYNC STATUS
 ========================================================= */
 
 app.get(
   '/admin/sync-status',
-  asyncHandler(async (req, res) => {
 
-    const suppliedSecret =
-      req.headers[
-        'x-sync-secret'
-      ];
+  asyncHandler(
+    async (req, res) => {
+
+      const suppliedSecret =
+        req.headers[
+          'x-sync-secret'
+        ];
 
 
-    if (
-      !process.env.DRIVE_SYNC_SECRET ||
-      suppliedSecret !==
-        process.env.DRIVE_SYNC_SECRET
-    ) {
+      if (
 
-      return res.status(403).json({
-        error:
-          'Unauthorized.'
+        !process.env.DRIVE_SYNC_SECRET ||
+
+        suppliedSecret !==
+          process.env.DRIVE_SYNC_SECRET
+
+      ) {
+
+        return res.status(403).json({
+
+          error:
+            'Unauthorized.'
+
+        });
+
+      }
+
+
+      const total =
+        await DriveSync.countDocuments();
+
+
+      const indexed =
+        await DriveSync.countDocuments({
+
+          status:
+            'indexed'
+
+        });
+
+
+      const updated =
+        await DriveSync.countDocuments({
+
+          status:
+            'updated'
+
+        });
+
+
+      const failed =
+        await DriveSync.countDocuments({
+
+          status:
+            'failed'
+
+        });
+
+
+      const totalChunks =
+        await DriveChunk.countDocuments();
+
+
+      const recent =
+        await DriveSync
+
+          .find()
+
+          .sort({
+
+            lastSyncedAt:
+              -1
+
+          })
+
+          .limit(20)
+
+          .select(
+            '-__v'
+          );
+
+
+      res.json({
+
+        success:
+          true,
+
+        total,
+
+        indexed,
+
+        updated,
+
+        failed,
+
+        totalChunks,
+
+        recent
+
       });
 
     }
 
+  )
 
-    const total =
-      await DriveSync.countDocuments();
-
-
-    const uploaded =
-      await DriveSync.countDocuments({
-        status: 'uploaded'
-      });
-
-
-    const updated =
-      await DriveSync.countDocuments({
-        status: 'updated'
-      });
-
-
-    const failed =
-      await DriveSync.countDocuments({
-        status: 'failed'
-      });
-
-
-    const recent =
-      await DriveSync
-        .find()
-        .sort({
-          lastSyncedAt: -1
-        })
-        .limit(20)
-        .select(
-          '-__v'
-        );
-
-
-    res.json({
-
-      success:
-        true,
-
-      total,
-
-      uploaded,
-
-      updated,
-
-      failed,
-
-      recent
-
-    });
-
-  })
 );
 
 
 /* =========================================================
-   AI SEARCH
+   AI SEARCH - GEMINI RAG
 ========================================================= */
 
 app.post(
@@ -2330,50 +3468,173 @@ app.post(
 
       try {
 
+        console.log(
+          `🔎 Question: ${question}`
+        );
+
+
+        /*
+         * STEP 1
+         * Vector search
+         */
+
+        const relevantChunks =
+          await searchRelevantChunks(
+
+            question.trim(),
+
+            5
+
+          );
+
+
+        console.log(
+
+          `📚 Retrieved ${relevantChunks.length} relevant chunks`
+
+        );
+
+
+        /*
+         * No results
+         */
+
+        if (
+          !relevantChunks.length
+        ) {
+
+          return res.json({
+
+            success:
+              true,
+
+            answer:
+              'கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை.',
+
+            sources:
+              []
+
+          });
+
+        }
+
+
+        /*
+         * STEP 2
+         * Build context
+         */
+
+        const context =
+          relevantChunks
+
+            .map(
+              (item, index) => {
+
+                return `
+
+DOCUMENT ${index + 1}
+
+FILE NAME:
+${item.fileName}
+
+DOCUMENT CONTENT:
+${item.text}
+
+SOURCE:
+${item.driveUrl}
+
+`;
+
+              }
+            )
+
+            .join(
+              '\n-----------------------------\n'
+            );
+
+
+        /*
+         * STEP 3
+         * Gemini answer
+         */
+
         const response =
           await gemini.models.generateContent({
 
             model:
               'gemini-3.8-flash',
 
-            contents:
-              question.trim(),
+            contents: `
+
+USER QUESTION:
+
+${question.trim()}
+
+
+RETRIEVED REVENUE DEPARTMENT DOCUMENTS:
+
+${context}
+
+`,
 
             config: {
 
               systemInstruction: `
 
-You are an AI assistant for the
-Tamil Nadu Revenue Department.
+You are an AI assistant for the Tamil Nadu Revenue Department.
 
-Answer questions clearly and accurately.
+Your task is to answer questions using ONLY the retrieved Revenue Department documents.
 
-IMPORTANT RULES:
+STRICT RULES:
 
-1. Do NOT invent any Government Order.
+1. Do not invent any Government Order.
 
-2. Do NOT invent dates.
+2. Do not invent any G.O. number.
 
-3. Do NOT invent sections.
+3. Do not invent dates.
 
-4. Do NOT invent rules.
+4. Do not invent Acts.
 
-5. Do NOT invent proceedings numbers.
+5. Do not invent Rules.
 
-6. If you are not certain, clearly say
-that the information could not be established.
+6. Do not invent Sections.
 
-7. Answer in the same language as
-the user's question.
+7. Do not invent proceedings.
 
-8. If the question is in Tamil,
-answer in official/simple Tamil.
+8. Do not invent circular numbers.
 
-9. If the question is in English,
-answer in clear official English.
+9. Do not assume information that is not present in the retrieved documents.
 
-10. Wherever possible, mention the
-relevant G.O., Act, Rule or document.
+10. If the answer cannot be established from the retrieved documents, say:
+
+"கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
+
+11. If the question is in Tamil, answer in Tamil.
+
+12. If the question is in English, answer in English.
+
+13. When available, mention:
+
+- Exact G.O. number
+- Exact date
+- Department
+- Subject
+- Relevant section/rule
+- Relevant document name
+
+14. Do not create fake citations.
+
+15. Do not cite documents that were not retrieved.
+
+16. If multiple documents conflict, clearly explain the conflict.
+
+17. Give a concise and official answer.
+
+18. For legal and government questions, distinguish between the document's actual statement and your explanation.
+
+19. Never present assumptions as official Government instructions.
+
+20. If retrieved information is insufficient, clearly say so.
 
 `
 
@@ -2381,6 +3642,36 @@ relevant G.O., Act, Rule or document.
 
           });
 
+
+        /*
+         * STEP 4
+         * Sources
+         */
+
+        const sources =
+          relevantChunks.map(
+            item => ({
+
+              fileName:
+                item.fileName,
+
+              driveUrl:
+                item.driveUrl,
+
+              chunkIndex:
+                item.chunkIndex,
+
+              score:
+                item.score
+
+            })
+          );
+
+
+        /*
+         * STEP 5
+         * Response
+         */
 
         res.json({
 
@@ -2391,7 +3682,9 @@ relevant G.O., Act, Rule or document.
             question.trim(),
 
           answer:
-            response.text
+            response.text,
+
+          sources
 
         });
 
@@ -2399,7 +3692,7 @@ relevant G.O., Act, Rule or document.
       } catch (error) {
 
         console.error(
-          '❌ Gemini API error:',
+          '❌ Gemini RAG error:',
           error
         );
 
@@ -2411,19 +3704,21 @@ relevant G.O., Act, Rule or document.
 
           error:
             error.message ||
-            'Gemini API request failed.'
+            'Gemini document search failed.'
 
         });
 
       }
 
     }
+
   )
+
 );
+
 
 /* =========================================================
    GLOBAL ERROR HANDLER
-   MUST BE AFTER ALL ROUTES
 ========================================================= */
 
 app.use(
@@ -2435,7 +3730,10 @@ app.use(
     );
 
 
-    // Mongoose validation error
+    /*
+     * Mongoose validation error
+     */
+
     if (
       err.name ===
       'ValidationError'
@@ -2445,10 +3743,15 @@ app.use(
         Object.values(
           err.errors
         )
+
         .map(
-          e => e.message
+          e =>
+            e.message
         )
-        .join(', ');
+
+        .join(
+          ', '
+        );
 
 
       return res.status(400).json({
@@ -2461,9 +3764,13 @@ app.use(
     }
 
 
-    // Duplicate key
+    /*
+     * Duplicate key
+     */
+
     if (
-      err.code === 11000
+      err.code ===
+      11000
     ) {
 
       const field =
