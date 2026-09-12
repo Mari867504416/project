@@ -4469,129 +4469,144 @@ app.get(
    AI SEARCH - GEMINI RAG
 ========================================================= */
 
-app.post('/ai-search', async (req, res) => {
+app.post(
+  '/ai-search',
+  async (req, res) => {
 
-  const cleanQuestion =
-    String(req.body?.question || '')
-      .trim()
-      .replace(/\s+/g, ' ');
+    const cleanQuestion =
+      String(req.body?.question || '')
+        .trim()
+        .replace(/\s+/g, ' ');
 
+    if (!cleanQuestion) {
 
-  if (!cleanQuestion) {
+      return res.status(400).json({
+        success: false,
+        error: 'Question is required.'
+      });
 
-    return res.status(400).json({
-      success: false,
-      error: 'Question is required.'
-    });
-  }
-
-
-  /*
-   * Create a normalized key.
-   */
-
-  const searchKey =
-    cleanQuestion.toLowerCase();
+    }
 
 
-  /*
-   * Prevent duplicate request within 5 seconds.
-   */
+    /*
+     * NORMALIZED SEARCH KEY
+     */
 
-  if (activeAiSearches.has(searchKey)) {
+    const searchKey =
+      cleanQuestion.toLowerCase();
 
-    console.log(
-      `⏭️ Duplicate AI search ignored: "${cleanQuestion}"`
+
+    /*
+     * PREVENT DUPLICATE REQUEST
+     */
+
+    if (activeAiSearches.has(searchKey)) {
+
+      console.log(
+        `⏭️ Duplicate AI search ignored: "${cleanQuestion}"`
+      );
+
+      return res.status(409).json({
+
+        success: false,
+
+        duplicate: true,
+
+        error:
+          'Duplicate search request. Please wait for the current search to complete.'
+
+      });
+
+    }
+
+
+    activeAiSearches.set(
+      searchKey,
+      Date.now()
     );
 
-    return res.status(409).json({
-      success: false,
-      duplicate: true,
-      error:
-        'Duplicate search request. Please wait for the current search to complete.'
-    });
-  }
+
+    try {
+
+      console.log(
+        `🔎 Question: ${cleanQuestion}`
+      );
 
 
-  activeAiSearches.set(
-    searchKey,
-    Date.now()
-  );
+      /*
+       * STEP 1
+       * VECTOR SEARCH
+       */
 
-
-  try {
-
-        const cleanQuestion =
-          question.trim();
-
-        console.log(
-          `🔎 Question: ${cleanQuestion}`
+      const relevantChunks =
+        await searchRelevantChunks(
+          cleanQuestion,
+          5
         );
 
-        /*
-         * STEP 1
-         * VECTOR SEARCH
-         */
 
-        const relevantChunks =
-          await searchRelevantChunks(
+      console.log(
+        `📚 Retrieved ${relevantChunks.length} relevant chunks`
+      );
+
+
+      /*
+       * NO RESULTS
+       */
+
+      if (
+        !relevantChunks ||
+        !relevantChunks.length
+      ) {
+
+        return res.json({
+
+          success: true,
+
+          question:
             cleanQuestion,
-            5
+
+          answer:
+            'கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை.',
+
+          sources: []
+
+        });
+
+      }
+
+
+      /*
+       * DEBUG RETRIEVED DOCUMENTS
+       */
+
+      relevantChunks.forEach(
+        (item, index) => {
+
+          console.log(
+            `📄 Retrieved ${index + 1}:`,
+            item.fileName,
+            `| chunk:`,
+            item.chunkIndex,
+            `| score:`,
+            item.score
           );
 
-        console.log(
-          `📚 Retrieved ${relevantChunks.length} relevant chunks`
-        );
-
-        /*
-         * NO RESULTS
-         */
-
-        if (
-          !relevantChunks ||
-          !relevantChunks.length
-        ) {
-
-          return res.json({
-            success: true,
-            question: cleanQuestion,
-            answer:
-              'கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை.',
-            sources: []
-          });
-
         }
+      );
 
-        /*
-         * DEBUG RETRIEVED DOCUMENTS
-         */
 
-        relevantChunks.forEach(
-          (item, index) => {
+      /*
+       * STEP 2
+       * BUILD GEMINI CONTEXT
+       */
 
-            console.log(
-              `📄 Retrieved ${index + 1}:`,
-              item.fileName,
-              `| chunk:`,
-              item.chunkIndex,
-              `| score:`,
-              item.score
-            );
+      const context =
+        relevantChunks
+          .map(
+            (item, index) => {
 
-          }
-        );
-
-        /*
-         * STEP 2
-         * BUILD CONTEXT
-         */
-
-        const context =
-          relevantChunks
-            .map(
-              (item, index) => {
-
-                return `
+              return `
 ==============================
 SOURCE DOCUMENT ${index + 1}
 ==============================
@@ -4611,22 +4626,23 @@ ${item.driveUrl || 'Not available'}
 ==============================
 `;
 
-              }
-            )
-            .join('\n');
+            }
+          )
+          .join('\n');
 
-        /*
-         * STEP 3
-         * GEMINI ANSWER
-         */
 
-        const response =
-          await gemini.models.generateContent({
+      /*
+       * STEP 3
+       * GEMINI ANSWER
+       */
 
-            model:
-              'gemini-3.6-flash',
+      const response =
+        await gemini.models.generateContent({
 
-            contents: `
+          model:
+            'gemini-3.6-flash',
+
+          contents: `
 USER QUESTION
 =============
 
@@ -4656,9 +4672,9 @@ IMPORTANT:
 - Mention the relevant document name when useful.
 `,
 
-            config: {
+          config: {
 
-              systemInstruction: `
+            systemInstruction: `
 
 You are an AI assistant for the Tamil Nadu Revenue Department.
 
@@ -4722,89 +4738,86 @@ STRICT DOCUMENT-GROUNDED RULES:
 
 `
 
+          }
+
+        });
+
+
+      /*
+       * STEP 4
+       * EXTRACT ANSWER
+       */
+
+      const answer =
+        typeof response.text === 'string'
+          ? response.text.trim()
+          : '';
+
+
+      console.log(
+        '🤖 Gemini answer length:',
+        answer.length
+      );
+
+
+      /*
+       * STEP 5
+       * UNIQUE SOURCES
+       *
+       * 5 chunks may come from the same PDF.
+       * Show that PDF only once.
+       */
+
+      const uniqueSources =
+        new Map();
+
+
+      for (
+        const item of relevantChunks
+      ) {
+
+        const key =
+          item.driveFileId ||
+          item.driveUrl ||
+          item.fileName;
+
+
+        if (
+          !uniqueSources.has(key)
+        ) {
+
+          uniqueSources.set(
+            key,
+            {
+
+              fileName:
+                item.fileName,
+
+              driveUrl:
+                item.driveUrl,
+
+              score:
+                item.score
+
             }
-
-          });
-
-        /*
-         * STEP 4
-         * EXTRACT ANSWER
-         */
-
-        const answer =
-          typeof response.text === 'string'
-            ? response.text.trim()
-            : '';
-
-        console.log(
-          '🤖 Gemini answer length:',
-          answer.length
-        );
-
-        /*
-         * GEMINI RETURNED NO TEXT
-         */
-
-        if (!answer) {
-
-          return res.json({
-
-            success: true,
-
-            question:
-              cleanQuestion,
-
-            answer:
-              'கிடைக்கப்பெற்ற ஆவணங்களில் இருந்து தெளிவான பதிலை உருவாக்க முடியவில்லை.',
-
-            sources:
-              relevantChunks.map(
-                item => ({
-
-                  fileName:
-                    item.fileName,
-
-                  driveUrl:
-                    item.driveUrl,
-
-                  chunkIndex:
-                    item.chunkIndex,
-
-                  score:
-                    item.score
-
-                })
-              )
-
-          });
+          );
 
         }
 
-        /*
-         * STEP 5
-         * SOURCES
-         */
+      }
 
-        const uniqueSources = new Map();
 
-for (const item of relevantChunks) {
-  const key = item.driveFileId || item.driveUrl || item.fileName;
+      const sources =
+        Array.from(
+          uniqueSources.values()
+        );
 
-  if (!uniqueSources.has(key)) {
-    uniqueSources.set(key, {
-      fileName: item.fileName,
-      driveUrl: item.driveUrl,
-      score: item.score
-    });
-  }
-}
 
-const sources = Array.from(uniqueSources.values());
+      /*
+       * GEMINI RETURNED NO TEXT
+       */
 
-        /*
-         * STEP 6
-         * FINAL RESPONSE
-         */
+      if (!answer) {
 
         return res.json({
 
@@ -4813,62 +4826,94 @@ const sources = Array.from(uniqueSources.values());
           question:
             cleanQuestion,
 
-          answer,
+          answer:
+            'கிடைக்கப்பெற்ற ஆவணங்களில் இருந்து தெளிவான பதிலை உருவாக்க முடியவில்லை.',
 
           sources
 
         });
 
-     } catch (error) {
-
-        console.error(
-          '❌ Gemini RAG error:',
-          error
-        );
-
-        /*
-         * Gemini quota exceeded
-         */
-
-        if (
-          error?.status === 429 ||
-          error?.code === 429 ||
-          error?.error?.code === 429
-        ) {
-
-          return res.status(429).json({
-            success: false,
-
-            error:
-              'Gemini daily quota exceeded. Please try again after the quota resets.',
-
-            quotaExceeded: true
-          });
-        }
+      }
 
 
-        /*
-         * Other Gemini/API errors
-         */
+      /*
+       * STEP 6
+       * FINAL RESPONSE
+       */
 
-        return res.status(500).json({
+      return res.json({
+
+        success: true,
+
+        question:
+          cleanQuestion,
+
+        answer,
+
+        sources
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        '❌ Gemini RAG error:',
+        error
+      );
+
+
+      /*
+       * GEMINI QUOTA EXCEEDED
+       */
+
+      if (
+        error?.status === 429 ||
+        error?.code === 429 ||
+        error?.error?.code === 429
+      ) {
+
+        return res.status(429).json({
+
           success: false,
 
           error:
-            'AI search is temporarily unavailable. Please try again later.'
+            'Gemini daily quota exceeded. Please try again after the quota resets.',
+
+          quotaExceeded: true
+
         });
 
-      } finally {
-
-        /*
-         * Remove active search
-         */
-
-        activeAiSearches.delete(searchKey);
       }
 
+
+      /*
+       * OTHER GEMINI/API ERRORS
+       */
+
+      return res.status(500).json({
+
+        success: false,
+
+        error:
+          'AI search is temporarily unavailable. Please try again later.'
+
+      });
+
+
+    } finally {
+
+      /*
+       * REMOVE ACTIVE SEARCH
+       */
+
+      activeAiSearches.delete(
+        searchKey
+      );
+
     }
-  )
+
+  }
 );
 /* =========================================================
    GLOBAL ERROR HANDLER
