@@ -1953,76 +1953,56 @@ async function searchRelevantChunks(
   limit = 5
 ) {
 
-  const queryEmbedding =
-    await createQueryEmbedding(
-      question
-    );
+  console.log(
+    '📊 Total DriveChunks:',
+    await DriveChunk.countDocuments()
+  );
 
+  console.log(
+    '📊 Valid embeddings:',
+    await DriveChunk.countDocuments({
+      embedding: { $size: 768 }
+    })
+  );
+
+  const queryEmbedding =
+    await createQueryEmbedding(question);
+
+  console.log(
+    '🔎 Query embedding dimension:',
+    queryEmbedding.length
+  );
 
   const results =
     await DriveChunk.aggregate([
-
       {
-
         $vectorSearch: {
-
-          index:
-            'revenue_vector_index',
-
-          path:
-            'embedding',
-
-          queryVector:
-            queryEmbedding,
-
-          numCandidates:
-            Math.max(
-              100,
-              limit * 20
-            ),
-
-          limit:
-            limit
-
+          index: 'revenue_vector_index',
+          path: 'embedding',
+          queryVector: queryEmbedding,
+          numCandidates: Math.max(100, limit * 20),
+          limit: limit
         }
-
       },
-
       {
-
         $project: {
-
-          _id:
-            0,
-
-          fileName:
-            1,
-
-          driveUrl:
-            1,
-
-          chunkIndex:
-            1,
-
-          text:
-            1,
-
+          _id: 0,
+          fileName: 1,
+          driveUrl: 1,
+          chunkIndex: 1,
+          text: 1,
           score: {
-
-            $meta:
-              'vectorSearchScore'
-
+            $meta: 'vectorSearchScore'
           }
-
         }
-
       }
-
     ]);
 
+  console.log(
+    `📚 Retrieved ${results.length} relevant chunks`
+  );
 
   return results;
-
 }
 
 /* =========================================================
