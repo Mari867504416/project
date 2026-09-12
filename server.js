@@ -456,18 +456,7 @@ async function getDriveChildren(
         q:
           `'${folderId}' in parents and trashed = false`,
 
-        fields:
-          `
-          nextPageToken,
-          files(
-            id,
-            name,
-            mimeType,
-            size,
-            modifiedTime,
-            md5Checksum
-          )
-          `,
+        fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum)',
 
         pageSize: 100,
 
