@@ -160,9 +160,7 @@ mongoose.connect(
 
 const driveChunkSchema =
   new mongoose.Schema(
-
     {
-
       driveFileId: {
         type: String,
         required: true,
@@ -191,18 +189,27 @@ const driveChunkSchema =
 
       embedding: {
         type: [Number],
-        required: true
+        required: true,
+        validate: {
+          validator: function (v) {
+            return Array.isArray(v) && v.length === 768;
+          },
+          message:
+            'Embedding must contain exactly 768 numbers.'
+        }
       }
-
     },
-
     {
       timestamps: true
     }
-
   );
 
-
+const DriveChunk =
+  mongoose.models.DriveChunk ||
+  mongoose.model(
+    'DriveChunk',
+    driveChunkSchema
+  );
 const DriveChunk =
   mongoose.models.DriveChunk ||
   mongoose.model(
@@ -1089,9 +1096,15 @@ function splitTextIntoChunks(
    GEMINI DOCUMENT EMBEDDING
 ========================================================= */
 
-async function createDocumentEmbedding(
-  text
-) {
+async function createDocumentEmbedding(text) {
+
+  if (!text || !text.trim()) {
+
+    throw new Error(
+      'Cannot create embedding from empty text.'
+    );
+
+  }
 
   const response =
     await gemini.models.embedContent({
@@ -1115,34 +1128,48 @@ async function createDocumentEmbedding(
     });
 
 
+  const values =
+    response?.embeddings?.[0]?.values;
+
+
+  console.log(
+    '🧠 Gemini document embedding dimension:',
+    values?.length || 0
+  );
+
+
   if (
-    !response.embeddings ||
-    !response.embeddings[0] ||
-    !response.embeddings[0].values
+    !Array.isArray(values) ||
+    values.length !== 768
   ) {
 
     throw new Error(
-      'Gemini returned an invalid document embedding.'
+      `Invalid Gemini document embedding. Expected 768 dimensions, got ${values?.length || 0}`
     );
 
   }
 
 
-  return
-    response
-      .embeddings[0]
-      .values;
+  return values;
 
 }
-
+/* =========================================================
+   GEMINI QUERY EMBEDDING
+========================================================= */
 
 /* =========================================================
    GEMINI QUERY EMBEDDING
 ========================================================= */
 
-async function createQueryEmbedding(
- question
-) {
+async function createQueryEmbedding(question) {
+
+  if (!question || !question.trim()) {
+
+    throw new Error(
+      'Cannot create query embedding from empty question.'
+    );
+
+  }
 
   const response =
     await gemini.models.embedContent({
@@ -1166,34 +1193,41 @@ async function createQueryEmbedding(
     });
 
 
+  const values =
+    response?.embeddings?.[0]?.values;
+
+
+  console.log(
+    '🔎 Query embedding dimension:',
+    values?.length || 0
+  );
+
+
   if (
-    !response.embeddings ||
-    !response.embeddings[0] ||
-    !response.embeddings[0].values
+    !Array.isArray(values) ||
+    values.length !== 768
   ) {
 
     throw new Error(
-      'Gemini returned an invalid query embedding.'
+      `Invalid Gemini query embedding. Expected 768 dimensions, got ${values?.length || 0}`
     );
 
   }
 
 
-  return
-    response
-      .embeddings[0]
-      .values;
+  return values;
 
 }
-
 
 /* =========================================================
    INDEX ONE PDF
 ========================================================= */
 
-async function indexDrivePdf(
-  file
-) {
+/* =========================================================
+   INDEX ONE PDF
+========================================================= */
+
+async function indexDrivePdf(file) {
 
   console.log(
     `📄 Indexing: ${file.name}`
@@ -1205,23 +1239,20 @@ async function indexDrivePdf(
 
   try {
 
-    /*
-     * Download PDF
-     */
+    /* =====================================================
+       DOWNLOAD PDF
+    ===================================================== */
 
     tempPath =
       await downloadDriveFile(
-
         file.id,
-
         file.name
-
       );
 
 
-    /*
-     * Read PDF
-     */
+    /* =====================================================
+       READ PDF
+    ===================================================== */
 
     const pdfBuffer =
       fs.readFileSync(
@@ -1229,9 +1260,9 @@ async function indexDrivePdf(
       );
 
 
-    /*
-     * Extract PDF text
-     */
+    /* =====================================================
+       EXTRACT PDF TEXT
+    ===================================================== */
 
     const pdfData =
       await pdfParse(
@@ -1263,19 +1294,15 @@ async function indexDrivePdf(
     }
 
 
-    /*
-     * Split text
-     */
+    /* =====================================================
+       SPLIT TEXT INTO CHUNKS
+    ===================================================== */
 
     const chunks =
       splitTextIntoChunks(
-
         text,
-
         5000,
-
         500
-
       );
 
 
@@ -1284,21 +1311,30 @@ async function indexDrivePdf(
     );
 
 
-    /*
-     * Delete old chunks
-     */
+    if (!chunks.length) {
 
-    await DriveChunk.deleteMany({
+      return {
 
-      driveFileId:
-        file.id
+        success:
+          false,
 
-    });
+        reason:
+          'No usable text chunks created.'
+
+      };
+
+    }
 
 
-    /*
-     * Create embeddings
-     */
+    /* =====================================================
+       CREATE ALL EMBEDDINGS FIRST
+       
+       IMPORTANT:
+       Do NOT delete old chunks yet.
+    ===================================================== */
+
+    const newChunks = [];
+
 
     for (
       let i = 0;
@@ -1307,9 +1343,7 @@ async function indexDrivePdf(
     ) {
 
       console.log(
-
         `🔢 Embedding chunk ${i + 1}/${chunks.length}`
-
       );
 
 
@@ -1319,7 +1353,32 @@ async function indexDrivePdf(
         );
 
 
-      await DriveChunk.create({
+      /* =================================================
+         VERIFY EMBEDDING
+      ================================================= */
+
+      if (
+        !Array.isArray(embedding) ||
+        embedding.length !== 768
+      ) {
+
+        throw new Error(
+          `Invalid embedding for chunk ${i + 1}: expected 768, got ${embedding?.length || 0}`
+        );
+
+      }
+
+
+      console.log(
+        `✅ Embedding ${i + 1}: ${embedding.length} dimensions`
+      );
+
+
+      /* =================================================
+         PREPARE CHUNK
+      ================================================= */
+
+      newChunks.push({
 
         driveFileId:
           file.id,
@@ -1344,6 +1403,43 @@ async function indexDrivePdf(
     }
 
 
+    /* =====================================================
+       ALL EMBEDDINGS SUCCESSFUL
+       
+       ONLY NOW DELETE OLD CHUNKS
+    ===================================================== */
+
+    console.log(
+      `🗑️ Removing old chunks for: ${file.name}`
+    );
+
+
+    await DriveChunk.deleteMany({
+
+      driveFileId:
+        file.id
+
+    });
+
+
+    /* =====================================================
+       INSERT NEW CHUNKS
+    ===================================================== */
+
+    console.log(
+      `💾 Saving ${newChunks.length} chunks to MongoDB`
+    );
+
+
+    await DriveChunk.insertMany(
+      newChunks
+    );
+
+
+    /* =====================================================
+       SUCCESS
+    ===================================================== */
+
     console.log(
       `✅ Indexed successfully: ${file.name}`
     );
@@ -1355,7 +1451,7 @@ async function indexDrivePdf(
         true,
 
       chunks:
-        chunks.length
+        newChunks.length
 
     };
 
@@ -1384,9 +1480,9 @@ async function indexDrivePdf(
 
   } finally {
 
-    /*
-     * Cleanup temporary PDF
-     */
+    /* =====================================================
+       CLEANUP TEMPORARY PDF
+    ===================================================== */
 
     if (
       tempPath &&
@@ -1416,8 +1512,6 @@ async function indexDrivePdf(
   }
 
 }
-
-
 /* =========================================================
    GOOGLE DRIVE → GEMINI → MONGODB SYNC
 ========================================================= */
@@ -1474,42 +1568,64 @@ async function syncGoogleDriveToGemini() {
        * Skip unchanged file
        */
 
-      if (
+     const validChunkExists =
+  await DriveChunk.exists({
 
-        existing &&
+    driveFileId:
+      file.id,
 
-        existing.modifiedTime ===
-          file.modifiedTime &&
+    embedding: {
 
-        existing.md5Checksum ===
-          file.md5Checksum &&
+      $exists:
+        true
 
-        existing.status !==
-          'failed'
+    }
 
-      ) {
-
-        skipped++;
+  });
 
 
-        details.push({
+/* =====================================================
+   SKIP ONLY IF FILE IS UNCHANGED
+   AND VALID CHUNK DATA EXISTS
+===================================================== */
 
-          file:
-            file.name,
+if (
 
-          status:
-            'skipped',
+  existing &&
 
-          chunks:
-            existing.chunkCount || 0
+  existing.modifiedTime ===
+    file.modifiedTime &&
 
-        });
+  existing.md5Checksum ===
+    file.md5Checksum &&
+
+  existing.status !==
+    'failed' &&
+
+  validChunkExists
+
+) {
+
+  skipped++;
 
 
-        continue;
+  details.push({
 
-      }
+    file:
+      file.name,
 
+    status:
+      'skipped',
+
+    chunks:
+      existing.chunkCount || 0
+
+  });
+
+
+  continue;
+
+}
 
       /*
        * Index PDF
@@ -1764,6 +1880,10 @@ async function syncGoogleDriveToGemini() {
    MONGODB VECTOR SEARCH
 ========================================================= */
 
+/* =========================================================
+   MONGODB VECTOR SEARCH
+========================================================= */
+
 async function searchRelevantChunks(
   question,
   limit = 5
@@ -1840,7 +1960,6 @@ async function searchRelevantChunks(
   return results;
 
 }
-
 
 /* =========================================================
    HEALTH CHECK
