@@ -1985,15 +1985,15 @@ async function searchRelevantChunks(
         }
       },
       {
-        $project: {
-          _id: 0,
-          fileName: 1,
-          driveUrl: 1,
-          chunkIndex: 1,
-          text: 1,
-          score: {
-            $meta: 'vectorSearchScore'
-          }
+       $project: {
+  _id: 0,
+  driveFileId: 1,
+  fileName: 1,
+  driveUrl: 1,
+  chunkIndex: 1,
+  text: 1,
+  score: { $meta: 'vectorSearchScore' }
+}
         }
       }
     ]);
@@ -3881,24 +3881,21 @@ STRICT DOCUMENT-GROUNDED RULES:
          * SOURCES
          */
 
-        const sources =
-          relevantChunks.map(
-            item => ({
+        const uniqueSources = new Map();
 
-              fileName:
-                item.fileName,
+for (const item of relevantChunks) {
+  const key = item.driveFileId || item.driveUrl || item.fileName;
 
-              driveUrl:
-                item.driveUrl,
+  if (!uniqueSources.has(key)) {
+    uniqueSources.set(key, {
+      fileName: item.fileName,
+      driveUrl: item.driveUrl,
+      score: item.score
+    });
+  }
+}
 
-              chunkIndex:
-                item.chunkIndex,
-
-              score:
-                item.score
-
-            })
-          );
+const sources = Array.from(uniqueSources.values());
 
         /*
          * STEP 6
