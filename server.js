@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
@@ -20,9 +20,13 @@ app.set('trust proxy', 1);
 /* =========================================================
    OPENAI
 ========================================================= */
-console.log("OPENAI_API_KEY loaded:", !!process.env.OPENAI_API_KEY);
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+console.log(
+  "GEMINI_API_KEY loaded:",
+  !!process.env.GEMINI_API_KEY
+);
+
+const gemini = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY
 });
 
 
@@ -2311,67 +2315,38 @@ app.post(
 
 
       if (
-        !process.env.OPENAI_API_KEY
+        !process.env.GEMINI_API_KEY
       ) {
 
         return res.status(500).json({
 
           error:
-            'OPENAI_API_KEY is not configured.'
+            'GEMINI_API_KEY is not configured.'
 
         });
 
       }
 
 
-      if (
-        !process.env.OPENAI_VECTOR_STORE_ID
-      ) {
+      try {
 
-        return res.status(500).json({
+        const response =
+          await gemini.models.generateContent({
 
-          error:
-            'OPENAI_VECTOR_STORE_ID is not configured.'
+            model:
+              'gemini-3.8-flash',
 
-        });
+            contents:
+              question.trim(),
 
-      }
+            config: {
 
-
-      const response =
-        await openai.responses.create({
-
-          model:
-            'gpt-5.6-luna',
-
-
-          instructions: `
+              systemInstruction: `
 
 You are an AI assistant for the
 Tamil Nadu Revenue Department.
 
-Your task is to answer questions
-using ONLY information contained
-in the documents available through
-the File Search tool.
-
-The documents may contain:
-
-Government Orders (G.O.s)
-Acts
-Rules
-Revenue Standing Orders
-Circulars
-Proceedings
-Pension rules
-Establishment rules
-Land matters
-Explosives matters
-Petroleum matters
-Government servant rules
-Department instructions
-Office proceedings
-Other official Revenue Department documents.
+Answer questions clearly and accurately.
 
 IMPORTANT RULES:
 
@@ -2385,78 +2360,66 @@ IMPORTANT RULES:
 
 5. Do NOT invent proceedings numbers.
 
-6. Do NOT assume a legal position if the
-   required document is unavailable.
+6. If you are not certain, clearly say
+that the information could not be established.
 
-7. If the answer cannot be established
-   from the available documents, say:
+7. Answer in the same language as
+the user's question.
 
-"கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
+8. If the question is in Tamil,
+answer in official/simple Tamil.
 
-8. Answer in the same language as the
-   user's question.
+9. If the question is in English,
+answer in clear official English.
 
-9. If the question is in Tamil,
-   answer in official/simple Tamil.
+10. Wherever possible, mention the
+relevant G.O., Act, Rule or document.
 
-10. If the question is in English,
-    answer in clear official English.
-
-11. Wherever possible, mention the
-    relevant G.O./Act/Rule/document name,
-    number and date.
-
-12. Do not cite a document unless the
-    document actually supports the answer.
-
-13. If multiple documents are relevant,
-    explain the relationship between them.
-
-`,
-
-
-          input:
-            question.trim(),
-
-
-          tools: [
-
-            {
-
-              type:
-                'file_search',
-
-              vector_store_ids: [
-
-                process.env
-                  .OPENAI_VECTOR_STORE_ID
-
-              ]
+`
 
             }
 
-          ]
+          });
+
+
+        res.json({
+
+          success:
+            true,
+
+          question:
+            question.trim(),
+
+          answer:
+            response.text
 
         });
 
 
-      res.json({
+      } catch (error) {
 
-        success:
-          true,
+        console.error(
+          '❌ Gemini API error:',
+          error
+        );
 
-        question:
-          question.trim(),
 
-        answer:
-          response.output_text
+        res.status(500).json({
 
-      });
+          success:
+            false,
+
+          error:
+            error.message ||
+            'Gemini API request failed.'
+
+        });
+
+      }
 
     }
   )
 );
-
 
 /* =========================================================
    GLOBAL ERROR HANDLER
