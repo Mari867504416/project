@@ -5,6 +5,10 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const OpenAI = require('openai');
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 const app = express();
 
@@ -438,7 +442,74 @@ app.use((err, req, res, next) => {
 
   res.status(500).json({ error: 'Internal server error. Please try again.' });
 });
+/* ---------- AI DOCUMENT SEARCH ---------- */
 
+app.post('/ai-search', asyncHandler(async (req, res) => {
+
+  const { question } = req.body;
+
+  if (!question || !question.trim()) {
+    return res.status(400).json({
+      error: 'Question is required.'
+    });
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(500).json({
+      error: 'OPENAI_API_KEY is not configured.'
+    });
+  }
+
+  if (!process.env.OPENAI_VECTOR_STORE_ID) {
+    return res.status(500).json({
+      error: 'OPENAI_VECTOR_STORE_ID is not configured.'
+    });
+  }
+
+  const response = await openai.responses.create({
+
+    model: 'gpt-5.6-luna',
+
+    instructions: `
+You are an AI assistant for the Tamil Nadu Revenue Department.
+
+Answer questions ONLY using information found in the
+Revenue Department documents available through file search.
+
+Do not invent Government Orders, Acts, Rules, dates,
+proceedings, sections or other legal information.
+
+If the required information is not available in the
+documents, clearly say:
+
+"கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
+
+The user may ask questions in Tamil or English.
+Answer in the same language as the question.
+
+Always identify the relevant source document when possible.
+`,
+
+    input: question.trim(),
+
+    tools: [
+      {
+        type: 'file_search',
+        vector_store_ids: [
+          process.env.OPENAI_VECTOR_STORE_ID
+        ]
+      }
+    ]
+  });
+
+  res.json({
+    success: true,
+    question: question.trim(),
+    answer: response.output_text
+  });
+
+}));
 /* ================= SERVER ================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
