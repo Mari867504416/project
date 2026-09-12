@@ -3595,148 +3595,161 @@ app.post(
   asyncHandler(
     async (req, res) => {
 
-      const {
-        question
-      } = req.body;
-
+      const { question } = req.body;
 
       if (
         !question ||
         !question.trim()
       ) {
-
         return res.status(400).json({
-
-          error:
-            'Question is required.'
-
+          error: 'Question is required.'
         });
-
       }
-
 
       if (
         !process.env.GEMINI_API_KEY
       ) {
-
         return res.status(500).json({
-
           error:
             'GEMINI_API_KEY is not configured.'
-
         });
-
       }
-
 
       try {
 
-        console.log(
-          `🔎 Question: ${question}`
-        );
+        const cleanQuestion =
+          question.trim();
 
+        console.log(
+          `🔎 Question: ${cleanQuestion}`
+        );
 
         /*
          * STEP 1
-         * Vector search
+         * VECTOR SEARCH
          */
 
         const relevantChunks =
           await searchRelevantChunks(
-
-            question.trim(),
-
+            cleanQuestion,
             5
-
           );
 
-
         console.log(
-
           `📚 Retrieved ${relevantChunks.length} relevant chunks`
-
         );
 
-
         /*
-         * No results
+         * NO RESULTS
          */
 
         if (
+          !relevantChunks ||
           !relevantChunks.length
         ) {
 
           return res.json({
-
-            success:
-              true,
-
+            success: true,
+            question: cleanQuestion,
             answer:
               'கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை.',
-
-            sources:
-              []
-
+            sources: []
           });
 
         }
 
+        /*
+         * DEBUG RETRIEVED DOCUMENTS
+         */
+
+        relevantChunks.forEach(
+          (item, index) => {
+
+            console.log(
+              `📄 Retrieved ${index + 1}:`,
+              item.fileName,
+              `| chunk:`,
+              item.chunkIndex,
+              `| score:`,
+              item.score
+            );
+
+          }
+        );
 
         /*
          * STEP 2
-         * Build context
+         * BUILD CONTEXT
          */
 
         const context =
           relevantChunks
-
             .map(
               (item, index) => {
 
                 return `
-
-DOCUMENT ${index + 1}
+==============================
+SOURCE DOCUMENT ${index + 1}
+==============================
 
 FILE NAME:
 ${item.fileName}
 
+CHUNK INDEX:
+${item.chunkIndex}
+
 DOCUMENT CONTENT:
 ${item.text}
 
-SOURCE:
-${item.driveUrl}
+GOOGLE DRIVE SOURCE:
+${item.driveUrl || 'Not available'}
 
+==============================
 `;
 
               }
             )
-
-            .join(
-              '\n-----------------------------\n'
-            );
-
+            .join('\n');
 
         /*
          * STEP 3
-         * Gemini answer
+         * GEMINI ANSWER
          */
 
         const response =
           await gemini.models.generateContent({
 
-            model: 'gemini-3.6-flash',
+            model:
+              'gemini-3.6-flash',
 
             contents: `
+USER QUESTION
+=============
 
-USER QUESTION:
-
-${question.trim()}
+${cleanQuestion}
 
 
-RETRIEVED REVENUE DEPARTMENT DOCUMENTS:
+RETRIEVED REVENUE DEPARTMENT DOCUMENTS
+======================================
 
 ${context}
 
+
+TASK
+====
+
+Answer the user's question using the retrieved document content above.
+
+IMPORTANT:
+
+- First examine ALL retrieved document contents.
+- If the answer is present in ANY retrieved document, answer the question.
+- Do NOT require the exact wording of the question to appear in the document.
+- You may summarize, explain, or combine information from the retrieved documents.
+- Do NOT use outside knowledge.
+- Do NOT invent missing information.
+- If only part of the answer is available, provide that part and clearly state what is not available.
+- Mention the relevant document name when useful.
 `,
 
             config: {
@@ -3745,58 +3758,63 @@ ${context}
 
 You are an AI assistant for the Tamil Nadu Revenue Department.
 
-Your task is to answer questions using ONLY the retrieved Revenue Department documents.
+Your answers must be grounded ONLY in the retrieved documents supplied in the user prompt.
 
-STRICT RULES:
+STRICT DOCUMENT-GROUNDED RULES:
 
-1. Do not invent any Government Order.
+1. Use the retrieved document content as the primary and only source of factual information.
 
-2. Do not invent any G.O. number.
+2. If the answer is available in the retrieved content, ANSWER IT.
 
-3. Do not invent dates.
+3. Do not say "information is not available" merely because the exact words of the question are not present.
 
-4. Do not invent Acts.
+4. You may understand the meaning of the retrieved text and explain it in clear language.
 
-5. Do not invent Rules.
+5. Do not invent Government Orders.
 
-6. Do not invent Sections.
+6. Do not invent G.O. numbers.
 
-7. Do not invent proceedings.
+7. Do not invent dates.
 
-8. Do not invent circular numbers.
+8. Do not invent Acts.
 
-9. Do not assume information that is not present in the retrieved documents.
+9. Do not invent Rules.
 
-10. If the answer cannot be established from the retrieved documents, say:
+10. Do not invent Sections.
+
+11. Do not invent proceedings.
+
+12. Do not invent circular numbers.
+
+13. Do not invent departmental instructions.
+
+14. Do not use information from your general knowledge when it is not contained in the retrieved documents.
+
+15. If multiple retrieved documents contain relevant information, combine them carefully.
+
+16. If documents contain conflicting information, clearly mention the conflict and identify the documents.
+
+17. If the retrieved documents contain only partial information, answer using the available information and state that the retrieved documents do not provide the remaining details.
+
+18. If the retrieved documents genuinely do not contain enough information to answer the question, say exactly:
 
 "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
 
-11. If the question is in Tamil, answer in Tamil.
+19. If the user asks in Tamil, answer in Tamil.
 
-12. If the question is in English, answer in English.
+20. If the user asks in English, answer in English.
 
-13. When available, mention:
+21. When the information is available, mention the relevant document name.
 
-- Exact G.O. number
-- Exact date
-- Department
-- Subject
-- Relevant section/rule
-- Relevant document name
+22. For Government documents, preserve exact G.O. numbers, dates, rule numbers, section numbers and form numbers as they appear in the retrieved text.
 
-14. Do not create fake citations.
+23. Do not create fake citations.
 
-15. Do not cite documents that were not retrieved.
+24. Do not cite documents that were not retrieved.
 
-16. If multiple documents conflict, clearly explain the conflict.
+25. Do not present assumptions as official Government instructions.
 
-17. Give a concise and official answer.
-
-18. For legal and government questions, distinguish between the document's actual statement and your explanation.
-
-19. Never present assumptions as official Government instructions.
-
-20. If retrieved information is insufficient, clearly say so.
+26. Keep the answer concise, clear and suitable for Revenue Department official use.
 
 `
 
@@ -3804,10 +3822,63 @@ STRICT RULES:
 
           });
 
-
         /*
          * STEP 4
-         * Sources
+         * EXTRACT ANSWER
+         */
+
+        const answer =
+          typeof response.text === 'string'
+            ? response.text.trim()
+            : '';
+
+        console.log(
+          '🤖 Gemini answer length:',
+          answer.length
+        );
+
+        /*
+         * GEMINI RETURNED NO TEXT
+         */
+
+        if (!answer) {
+
+          return res.json({
+
+            success: true,
+
+            question:
+              cleanQuestion,
+
+            answer:
+              'கிடைக்கப்பெற்ற ஆவணங்களில் இருந்து தெளிவான பதிலை உருவாக்க முடியவில்லை.',
+
+            sources:
+              relevantChunks.map(
+                item => ({
+
+                  fileName:
+                    item.fileName,
+
+                  driveUrl:
+                    item.driveUrl,
+
+                  chunkIndex:
+                    item.chunkIndex,
+
+                  score:
+                    item.score
+
+                })
+              )
+
+          });
+
+        }
+
+        /*
+         * STEP 5
+         * SOURCES
          */
 
         const sources =
@@ -3829,27 +3900,23 @@ STRICT RULES:
             })
           );
 
-
         /*
-         * STEP 5
-         * Response
+         * STEP 6
+         * FINAL RESPONSE
          */
 
-        res.json({
+        return res.json({
 
-          success:
-            true,
+          success: true,
 
           question:
-            question.trim(),
+            cleanQuestion,
 
-          answer:
-            response.text,
+          answer,
 
           sources
 
         });
-
 
       } catch (error) {
 
@@ -3858,11 +3925,9 @@ STRICT RULES:
           error
         );
 
+        return res.status(500).json({
 
-        res.status(500).json({
-
-          success:
-            false,
+          success: false,
 
           error:
             error.message ||
@@ -3873,11 +3938,8 @@ STRICT RULES:
       }
 
     }
-
   )
-
 );
-
 
 /* =========================================================
    GLOBAL ERROR HANDLER
