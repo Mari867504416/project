@@ -1667,10 +1667,9 @@ if (
   existing.status !==
     'failed' &&
 
-  validChunkExists
+  hasValidEmbeddings
 
 ) {
-
   skipped++;
 
 
@@ -3745,8 +3744,7 @@ ${item.driveUrl}
         const response =
           await gemini.models.generateContent({
 
-            model:
-              'gemini-3.8-flash',
+            model: 'gemini-3.6-flash',
 
             contents: `
 
