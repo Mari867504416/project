@@ -1290,35 +1290,39 @@ async function createQueryEmbedding(question) {
    GEMINI GENERATE CONTENT WITH RETRY + FALLBACK
 ========================================================= */
 
+/* =========================================================
+   GEMINI GENERATE CONTENT
+   3-MODEL FALLBACK
+========================================================= */
+
 async function generateGeminiAnswer(prompt) {
 
   const modelsToTry = [
     'gemini-3.6-flash',
-    'gemini-2.5-flash'
+    'gemini-2.5-flash',
+    'gemini-3.5-flash-lite'
   ];
 
   let lastError = null;
 
   for (const modelName of modelsToTry) {
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
 
-      try {
+      console.log(
+        `🤖 Trying Gemini model: ${modelName}`
+      );
 
-        console.log(
-          `🤖 Gemini model: ${modelName} | attempt: ${attempt}/3`
-        );
+      const response =
+        await gemini.models.generateContent({
 
-        const response =
-          await gemini.models.generateContent({
+          model: modelName,
 
-            model: modelName,
+          contents: prompt,
 
-            contents: prompt,
+          config: {
 
-            config: {
-
-              systemInstruction: `
+            systemInstruction: `
 
 You are an AI assistant for the Tamil Nadu Revenue Department.
 
@@ -1339,106 +1343,82 @@ STRICT RULES:
 11. Do not invent proceedings.
 12. Do not invent circular numbers.
 13. Do not use outside knowledge.
-14. If multiple documents are relevant, combine them carefully.
+14. If multiple retrieved documents are relevant, combine them carefully.
 15. If information is partial, clearly state the limitation.
 16. If the documents genuinely do not contain the answer, say:
    "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
 17. If the question is in Tamil, answer in Tamil.
 18. If the question is in English, answer in English.
 19. Mention the relevant document name when useful.
-20. Preserve exact G.O. numbers, dates, Acts, Rules, Sections and Forms as found in the documents.
+20. Preserve exact G.O. numbers, dates, Acts, Rules,
+    Sections and Forms as found in the documents.
 
 `
 
-            }
-
-          });
-
-        console.log(
-          `✅ Gemini answer generated using ${modelName}`
-        );
-
-        return response;
-
-      } catch (error) {
-
-        lastError = error;
-
-        const status =
-          error?.status ||
-          error?.code ||
-          error?.error?.code;
-
-        console.error(
-          `⚠️ Gemini ${modelName} attempt ${attempt} failed:`,
-          status,
-          error?.message || error
-        );
-
-        /*
-         * Retry temporary server errors
-         */
-
-        if (
-          status === 503 ||
-          status === 500 ||
-          status === 502 ||
-          status === 504
-        ) {
-
-          if (attempt < 3) {
-
-            const delay =
-              attempt * 3000;
-
-            console.log(
-              `⏳ Waiting ${delay} ms before retry...`
-            );
-
-            await new Promise(
-              resolve =>
-                setTimeout(resolve, delay)
-            );
-
-            continue;
           }
 
-        }
+        });
 
-        /*
-         * Quota error
-         * Do not waste retries
-         */
+      console.log(
+        `✅ Gemini answer generated using: ${modelName}`
+      );
 
-        if (
-          status === 429
-        ) {
+      return response;
 
-          console.error(
-            '❌ Gemini quota exceeded.'
-          );
+    } catch (error) {
 
-          throw error;
+      lastError = error;
 
-        }
+      const status =
+        error?.status ||
+        error?.code ||
+        error?.error?.code;
 
-        /*
-         * Other errors
-         */
+      console.error(
+        `⚠️ ${modelName} failed:`,
+        status,
+        error?.message || error
+      );
 
-        break;
+
+      /*
+       * 429 = QUOTA EXCEEDED
+       * 503 = TEMPORARILY UNAVAILABLE
+       */
+
+      if (
+        status === 429 ||
+        status === 503
+      ) {
+
+        console.log(
+          `🔄 ${modelName} unavailable. Trying next model...`
+        );
+
+        continue;
+
       }
+
+
+      /*
+       * Other errors should not silently
+       * switch models.
+       */
+
+      throw error;
+
     }
 
-    /*
-     * First model failed completely.
-     * Try fallback model.
-     */
-
-    console.log(
-      `🔄 Switching to fallback Gemini model: ${modelsToTry[1]}`
-    );
   }
+
+
+  /*
+   * ALL MODELS FAILED
+   */
+
+  console.error(
+    '❌ All Gemini models failed.'
+  );
 
   throw lastError;
 
@@ -4793,7 +4773,7 @@ ${item.driveUrl || 'Not available'}
        * GEMINI ANSWER
        */
 
-    const response =
+   const response =
   await generateGeminiAnswer(`
 USER QUESTION
 =============
@@ -4814,13 +4794,12 @@ Answer the user's question using the retrieved document content above.
 
 IMPORTANT:
 
-- First examine ALL retrieved document contents.
-- If the answer is present in ANY retrieved document, answer the question.
-- Do NOT require the exact wording of the question to appear in the document.
-- You may summarize, explain, or combine information from the retrieved documents.
+- Examine ALL retrieved document contents.
+- If the answer is present in ANY retrieved document, answer it.
+- Do NOT require exact wording.
+- Summarize and explain the retrieved content when appropriate.
 - Do NOT use outside knowledge.
 - Do NOT invent missing information.
-- If only part of the answer is available, provide that part and clearly state what is not available.
 - Mention the relevant document name when useful.
 `);
       const answer =
