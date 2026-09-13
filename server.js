@@ -2982,28 +2982,225 @@ async function searchKeywordChunks(question, limit = 10) {
     `🔤 Keyword search: ${cleanQuestion}`
   );
 
-  // --------------------------------------------------
-  // 1. Extract useful search terms
-  // --------------------------------------------------
+  // ==================================================
+  // 1. Extract special legal / government references
+  // ==================================================
+
+  const specialTerms = [];
+
+  // G.O.175
+  // G.O. 175
+  // G.O.Ms.No.175
+  // G.O.(Ms) No.175
+  // GO 175
+  // GOMS 175
+
+  const goMatches =
+    cleanQuestion.match(
+      /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:Ms\.?\s*)?(?:No\.?\s*)?\.?\s*\d+(?:\/\d+)?/gi
+    );
+
+  if (goMatches) {
+
+    for (const match of goMatches) {
+
+      const normalized =
+        match
+          .replace(/\s+/g, '')
+          .replace(/\(\s*/g, '(')
+          .replace(/\s*\)/g, ')')
+          .toLowerCase();
+
+      specialTerms.push(normalized);
+
+      // Also extract the numerical G.O. number
+      const numberMatch =
+        match.match(/\d+(?:\/\d+)?/);
+
+      if (numberMatch) {
+        specialTerms.push(
+          `go${numberMatch[0]}`
+        );
+
+        specialTerms.push(
+          numberMatch[0]
+        );
+      }
+    }
+  }
+
+  // ==================================================
+  // 2. Section numbers
+  // ==================================================
+
+  const sectionMatches =
+    cleanQuestion.match(
+      /\b(?:section|sec\.?)\s*\d+(?:-[a-z])?(?:\([a-z0-9]+\))?/gi
+    );
+
+  if (sectionMatches) {
+
+    for (const match of sectionMatches) {
+
+      specialTerms.push(
+        match
+          .replace(/\s+/g, '')
+          .toLowerCase()
+      );
+
+    }
+  }
+
+  // ==================================================
+  // 3. Rule numbers
+  // ==================================================
+
+  const ruleMatches =
+    cleanQuestion.match(
+      /\b(?:rule|rules)\s*\d+(?:\([a-z0-9]+\))?/gi
+    );
+
+  if (ruleMatches) {
+
+    for (const match of ruleMatches) {
+
+      specialTerms.push(
+        match
+          .replace(/\s+/g, '')
+          .toLowerCase()
+      );
+
+    }
+  }
+
+  // ==================================================
+  // 4. Date detection
+  // ==================================================
+
+  const dateMatches =
+    cleanQuestion.match(
+      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g
+    );
+
+  if (dateMatches) {
+
+    for (const date of dateMatches) {
+      specialTerms.push(date);
+    }
+  }
+
+  // ==================================================
+  // 5. Normal keyword extraction
+  // ==================================================
 
   const rawTerms =
     cleanQuestion
       .split(/\s+/)
       .map(term =>
         term
-          .replace(/[^\p{L}\p{N}.-]/gu, '')
+          .replace(
+            /[^\p{L}\p{N}.-]/gu,
+            ''
+          )
           .trim()
       )
-      .filter(term => term.length >= 2);
+      .filter(
+        term =>
+          term.length >= 3
+      );
 
-  const uniqueTerms =
-    [...new Set(
-      rawTerms.map(term =>
+  // ==================================================
+  // 6. Tamil question words to ignore
+  // ==================================================
+
+  const stopWords = new Set([
+
+    // Tamil question words
+    'எதை',
+    'எது',
+    'என்ன',
+    'எப்படி',
+    'எங்கே',
+    'எப்போது',
+    'எதற்கு',
+    'எதனால்',
+    'எதற்காக',
+    'யார்',
+    'யாருடைய',
+    'யாருக்கு',
+    'யாரால்',
+    'எந்த',
+    'எவ்வாறு',
+    'எவ்வளவு',
+    'எத்தனை',
+    'குறித்து',
+    'பற்றி',
+    'கூறுகிறது',
+    'கூறுக',
+    'விளக்கவும்',
+    'விளக்கம்',
+    'சொல்லவும்',
+    'தெரிவிக்கவும்',
+    'உள்ளது',
+    'உள்ளன',
+    'ஆகும்',
+    'என்பது',
+
+    // English question words
+    'what',
+    'which',
+    'when',
+    'where',
+    'why',
+    'who',
+    'how',
+    'about',
+    'tell',
+    'explain',
+    'please',
+    'give',
+    'details',
+    'detail',
+    'does',
+    'mean',
+    'means'
+  ]);
+
+  const normalTerms =
+    rawTerms
+      .map(term =>
         term.toLowerCase()
       )
-    )];
+      .filter(
+        term =>
+          !stopWords.has(term)
+      );
+
+  // ==================================================
+  // 7. Combine special + normal terms
+  // ==================================================
+
+  const allTerms =
+    [
+      ...specialTerms,
+      ...normalTerms
+    ];
+
+  const uniqueTerms =
+    [
+      ...new Set(
+        allTerms.filter(
+          term => term && term.length >= 2
+        )
+      )
+    ];
 
   if (!uniqueTerms.length) {
+
+    console.log(
+      '🔤 No useful keyword terms found'
+    );
+
     return [];
   }
 
@@ -3012,9 +3209,9 @@ async function searchKeywordChunks(question, limit = 10) {
     uniqueTerms
   );
 
-  // --------------------------------------------------
-  // 2. Escape regex characters
-  // --------------------------------------------------
+  // ==================================================
+  // 8. Build regex
+  // ==================================================
 
   const regexTerms =
     uniqueTerms.map(term =>
@@ -3027,34 +3224,46 @@ async function searchKeywordChunks(question, limit = 10) {
   const regex =
     regexTerms.join('|');
 
-  // --------------------------------------------------
-  // 3. Search filename + text
-  // --------------------------------------------------
+  // ==================================================
+  // 9. MongoDB keyword search
+  // ==================================================
 
   const results =
     await DriveChunk.find({
+
       $or: [
+
         {
           text: {
             $regex: regex,
             $options: 'i'
           }
         },
+
         {
           fileName: {
             $regex: regex,
             $options: 'i'
           }
         }
+
       ]
+
     })
     .select({
+
       _id: 0,
+
       driveFileId: 1,
+
       fileName: 1,
+
       driveUrl: 1,
+
       chunkIndex: 1,
+
       text: 1
+
     })
     .limit(200)
     .lean();
@@ -3063,9 +3272,9 @@ async function searchKeywordChunks(question, limit = 10) {
     `🔤 Keyword raw matches: ${results.length}`
   );
 
-  // --------------------------------------------------
-  // 4. Score each result
-  // --------------------------------------------------
+  // ==================================================
+  // 10. Score results
+  // ==================================================
 
   const scoredResults =
     results.map(item => {
@@ -3082,68 +3291,153 @@ async function searchKeywordChunks(question, limit = 10) {
 
       let keywordScore = 0;
 
-      let matchedTerms = [];
+      const matchedTerms = [];
 
       for (const term of uniqueTerms) {
 
+        const termLower =
+          term.toLowerCase();
+
         const inFileName =
-          fileName.includes(term);
+          fileName.includes(
+            termLower
+          );
 
         const inText =
-          text.includes(term);
+          text.includes(
+            termLower
+          );
 
-        if (inFileName) {
+        // ============================================
+        // Special legal references
+        // ============================================
 
-          // Filename match is highly important
-          keywordScore += 5;
+        const isSpecial =
+          specialTerms.includes(
+            term
+          );
 
-          matchedTerms.push(term);
+        if (isSpecial) {
 
-        } else if (inText) {
+          if (inFileName) {
 
-          keywordScore += 1;
+            keywordScore += 15;
 
-          matchedTerms.push(term);
+            matchedTerms.push(
+              term
+            );
+
+          }
+
+          if (inText) {
+
+            keywordScore += 10;
+
+            if (
+              !matchedTerms.includes(term)
+            ) {
+              matchedTerms.push(term);
+            }
+
+          }
+
+        }
+
+        // ============================================
+        // Normal keywords
+        // ============================================
+
+        else {
+
+          if (inFileName) {
+
+            keywordScore += 5;
+
+            matchedTerms.push(
+              term
+            );
+
+          }
+          else if (inText) {
+
+            keywordScore += 1;
+
+            matchedTerms.push(
+              term
+            );
+
+          }
+
         }
       }
 
-      // ------------------------------------------------
-      // Exact phrase bonus
-      // ------------------------------------------------
+      // =================================================
+      // Exact question phrase bonus
+      // =================================================
 
       const lowerQuestion =
         cleanQuestion.toLowerCase();
 
       if (
-        text.includes(lowerQuestion)
+        text.includes(
+          lowerQuestion
+        )
       ) {
 
         keywordScore += 10;
 
       }
 
-      if (
-        fileName.includes(lowerQuestion)
+      // =================================================
+      // Exact G.O. number bonus
+      // =================================================
+
+      for (
+        const specialTerm
+        of specialTerms
       ) {
 
-        keywordScore += 15;
+        if (
+          text.includes(
+            specialTerm
+          )
+        ) {
 
+          keywordScore += 20;
+
+        }
+
+        if (
+          fileName.includes(
+            specialTerm
+          )
+        ) {
+
+          keywordScore += 30;
+
+        }
       }
 
       return {
+
         ...item,
 
         keywordScore,
 
         matchedTerms:
-          [...new Set(matchedTerms)]
+          [
+            ...new Set(
+              matchedTerms
+            )
+          ]
+
       };
 
     });
 
-  // --------------------------------------------------
-  // 5. Remove zero-score results
-  // --------------------------------------------------
+  // ==================================================
+  // 11. Remove zero-score results
+  // ==================================================
 
   const validResults =
     scoredResults.filter(
@@ -3151,9 +3445,9 @@ async function searchKeywordChunks(question, limit = 10) {
         item.keywordScore > 0
     );
 
-  // --------------------------------------------------
-  // 6. Sort highest score first
-  // --------------------------------------------------
+  // ==================================================
+  // 12. Sort
+  // ==================================================
 
   validResults.sort(
     (a, b) =>
@@ -3161,9 +3455,9 @@ async function searchKeywordChunks(question, limit = 10) {
       a.keywordScore
   );
 
-  // --------------------------------------------------
-  // 7. Return top results
-  // --------------------------------------------------
+  // ==================================================
+  // 13. Final results
+  // ==================================================
 
   const finalResults =
     validResults.slice(
@@ -3194,7 +3488,6 @@ async function searchKeywordChunks(question, limit = 10) {
 
   return finalResults;
 }
-
 /* =========================================================
    VECTOR SEARCH
 ========================================================= */
