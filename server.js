@@ -2967,529 +2967,536 @@ app.post(
    PHASE 2 - KEYWORD SEARCH
 ========================================================= */
 
-async function searchKeywordChunks(question, limit = 10) {
+async function searchKeywordChunks(
+    question,
+    limit = 10,
+    fileIds = []
+) {
 
-  const cleanQuestion =
-    String(question || '')
-      .trim()
-      .replace(/\s+/g, ' ');
+    const cleanQuestion =
+        String(question || '')
+            .trim()
+            .replace(/\s+/g, ' ');
 
-  if (!cleanQuestion) {
-    return [];
-  }
-
-  console.log(
-    `🔤 Keyword search: ${cleanQuestion}`
-  );
-
-  // ==================================================
-  // 1. Extract special legal / government references
-  // ==================================================
-
-  const specialTerms = [];
-
-  // G.O.175
-  // G.O. 175
-  // G.O.Ms.No.175
-  // G.O.(Ms) No.175
-  // GO 175
-  // GOMS 175
-
-  const goMatches =
-    cleanQuestion.match(
-      /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:Ms\.?\s*)?(?:No\.?\s*)?\.?\s*\d+(?:\/\d+)?/gi
-    );
-
-  if (goMatches) {
-
-    for (const match of goMatches) {
-
-      const normalized =
-        match
-          .replace(/\s+/g, '')
-          .replace(/\(\s*/g, '(')
-          .replace(/\s*\)/g, ')')
-          .toLowerCase();
-
-      specialTerms.push(normalized);
-
-      // Also extract the numerical G.O. number
-      const numberMatch =
-        match.match(/\d+(?:\/\d+)?/);
-
-      if (numberMatch) {
-        specialTerms.push(
-          `go${numberMatch[0]}`
-        );
-
-        specialTerms.push(
-          numberMatch[0]
-        );
-      }
+    if (!cleanQuestion) {
+        return [];
     }
-  }
-
-  // ==================================================
-  // 2. Section numbers
-  // ==================================================
-
-  const sectionMatches =
-    cleanQuestion.match(
-      /\b(?:section|sec\.?)\s*\d+(?:-[a-z])?(?:\([a-z0-9]+\))?/gi
-    );
-
-  if (sectionMatches) {
-
-    for (const match of sectionMatches) {
-
-      specialTerms.push(
-        match
-          .replace(/\s+/g, '')
-          .toLowerCase()
-      );
-
-    }
-  }
-
-  // ==================================================
-  // 3. Rule numbers
-  // ==================================================
-
-  const ruleMatches =
-    cleanQuestion.match(
-      /\b(?:rule|rules)\s*\d+(?:\([a-z0-9]+\))?/gi
-    );
-
-  if (ruleMatches) {
-
-    for (const match of ruleMatches) {
-
-      specialTerms.push(
-        match
-          .replace(/\s+/g, '')
-          .toLowerCase()
-      );
-
-    }
-  }
-
-  // ==================================================
-  // 4. Date detection
-  // ==================================================
-
-  const dateMatches =
-    cleanQuestion.match(
-      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g
-    );
-
-  if (dateMatches) {
-
-    for (const date of dateMatches) {
-      specialTerms.push(date);
-    }
-  }
-
-  // ==================================================
-  // 5. Normal keyword extraction
-  // ==================================================
-
-  const rawTerms =
-    cleanQuestion
-      .split(/\s+/)
-      .map(term =>
-        term
-          .replace(
-            /[^\p{L}\p{N}.-]/gu,
-            ''
-          )
-          .trim()
-      )
-      .filter(
-        term =>
-          term.length >= 3
-      );
-
-  // ==================================================
-  // 6. Tamil question words to ignore
-  // ==================================================
-
-  const stopWords = new Set([
-
-    // Tamil question words
-    'எதை',
-    'எது',
-    'என்ன',
-    'எப்படி',
-    'எங்கே',
-    'எப்போது',
-    'எதற்கு',
-    'எதனால்',
-    'எதற்காக',
-    'யார்',
-    'யாருடைய',
-    'யாருக்கு',
-    'யாரால்',
-    'எந்த',
-    'எவ்வாறு',
-    'எவ்வளவு',
-    'எத்தனை',
-    'குறித்து',
-    'பற்றி',
-    'கூறுகிறது',
-    'கூறுக',
-    'விளக்கவும்',
-    'விளக்கம்',
-    'சொல்லவும்',
-    'தெரிவிக்கவும்',
-    'உள்ளது',
-    'உள்ளன',
-    'ஆகும்',
-    'என்பது',
-
-    // English question words
-    'what',
-    'which',
-    'when',
-    'where',
-    'why',
-    'who',
-    'how',
-    'about',
-    'tell',
-    'explain',
-    'please',
-    'give',
-    'details',
-    'detail',
-    'does',
-    'mean',
-    'means'
-  ]);
-
-  const normalTerms =
-    rawTerms
-      .map(term =>
-        term.toLowerCase()
-      )
-      .filter(
-        term =>
-          !stopWords.has(term)
-      );
-
-  // ==================================================
-  // 7. Combine special + normal terms
-  // ==================================================
-
-  const allTerms =
-    [
-      ...specialTerms,
-      ...normalTerms
-    ];
-
-  const uniqueTerms =
-    [
-      ...new Set(
-        allTerms.filter(
-          term => term && term.length >= 2
-        )
-      )
-    ];
-
-  if (!uniqueTerms.length) {
 
     console.log(
-      '🔤 No useful keyword terms found'
+        `🔤 Keyword search: ${cleanQuestion}`
     );
 
-    return [];
-  }
-
-  console.log(
-    '🔤 Search terms:',
-    uniqueTerms
-  );
-
-  // ==================================================
-  // 8. Build regex
-  // ==================================================
-
-  const regexTerms =
-    uniqueTerms.map(term =>
-      term.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        '\\$&'
-      )
+    console.log(
+        `📂 Keyword file filter: ${fileIds.length} files`
     );
 
-  const regex =
-    regexTerms.join('|');
+    const specialTerms = [];
 
-  // ==================================================
-  // 9. MongoDB keyword search
-  // ==================================================
+    // =====================================================
+    // G.O. NUMBER
+    // =====================================================
 
-  const results =
-    await DriveChunk.find({
+    const goMatches =
+        cleanQuestion.match(
+            /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:Ms\.?\s*)?(?:No\.?\s*)?\.?\s*\d+(?:\/\d+)?/gi
+        );
 
-      $or: [
+    if (goMatches) {
 
-        {
-          text: {
-            $regex: regex,
-            $options: 'i'
-          }
-        },
+        for (const match of goMatches) {
 
-        {
-          fileName: {
-            $regex: regex,
-            $options: 'i'
-          }
-        }
+            const normalized =
+                match
+                    .replace(/\s+/g, '')
+                    .replace(/\(\s*/g, '(')
+                    .replace(/\s*\)/g, ')')
+                    .toLowerCase();
 
-      ]
-
-    })
-    .select({
-
-      _id: 0,
-
-      driveFileId: 1,
-
-      fileName: 1,
-
-      driveUrl: 1,
-
-      chunkIndex: 1,
-
-      text: 1
-
-    })
-    .limit(200)
-    .lean();
-
-  console.log(
-    `🔤 Keyword raw matches: ${results.length}`
-  );
-
-  // ==================================================
-  // 10. Score results
-  // ==================================================
-
-  const scoredResults =
-    results.map(item => {
-
-      const fileName =
-        String(
-          item.fileName || ''
-        ).toLowerCase();
-
-      const text =
-        String(
-          item.text || ''
-        ).toLowerCase();
-
-      let keywordScore = 0;
-
-      const matchedTerms = [];
-
-      for (const term of uniqueTerms) {
-
-        const termLower =
-          term.toLowerCase();
-
-        const inFileName =
-          fileName.includes(
-            termLower
-          );
-
-        const inText =
-          text.includes(
-            termLower
-          );
-
-        // ============================================
-        // Special legal references
-        // ============================================
-
-        const isSpecial =
-          specialTerms.includes(
-            term
-          );
-
-        if (isSpecial) {
-
-          if (inFileName) {
-
-            keywordScore += 15;
-
-            matchedTerms.push(
-              term
+            specialTerms.push(
+                normalized
             );
 
-          }
+            const numberMatch =
+                match.match(
+                    /\d+(?:\/\d+)?/
+                );
 
-          if (inText) {
+            if (numberMatch) {
 
-            keywordScore += 10;
+                specialTerms.push(
+                    `go${numberMatch[0]}`
+                );
 
-            if (
-              !matchedTerms.includes(term)
+                specialTerms.push(
+                    numberMatch[0]
+                );
+            }
+        }
+    }
+
+
+    // =====================================================
+    // SECTION
+    // =====================================================
+
+    const sectionMatches =
+        cleanQuestion.match(
+            /\b(?:section|sec\.?)\s*\d+(?:-[a-z])?(?:\([a-z0-9]+\))?/gi
+        );
+
+    if (sectionMatches) {
+
+        for (const match of sectionMatches) {
+
+            specialTerms.push(
+                match
+                    .replace(/\s+/g, '')
+                    .toLowerCase()
+            );
+        }
+    }
+
+
+    // =====================================================
+    // RULE
+    // =====================================================
+
+    const ruleMatches =
+        cleanQuestion.match(
+            /\b(?:rule|rules)\s*\d+(?:\([a-z0-9]+\))?/gi
+        );
+
+    if (ruleMatches) {
+
+        for (const match of ruleMatches) {
+
+            specialTerms.push(
+                match
+                    .replace(/\s+/g, '')
+                    .toLowerCase()
+            );
+        }
+    }
+
+
+    // =====================================================
+    // DATE
+    // =====================================================
+
+    const dateMatches =
+        cleanQuestion.match(
+            /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g
+        );
+
+    if (dateMatches) {
+
+        for (const date of dateMatches) {
+
+            specialTerms.push(
+                date
+            );
+        }
+    }
+
+
+    // =====================================================
+    // NORMAL TERMS
+    // =====================================================
+
+    const rawTerms =
+        cleanQuestion
+            .split(/\s+/)
+            .map(term =>
+                term
+                    .replace(
+                        /[^\p{L}\p{N}.-]/gu,
+                        ''
+                    )
+                    .trim()
+            )
+            .filter(
+                term =>
+                    term.length >= 3
+            );
+
+
+    const stopWords =
+        new Set([
+
+            'எதை',
+            'எது',
+            'என்ன',
+            'எப்படி',
+            'எங்கே',
+            'எப்போது',
+            'எதற்கு',
+            'எதனால்',
+            'எதற்காக',
+            'யார்',
+            'யாருடைய',
+            'யாருக்கு',
+            'யாரால்',
+            'எந்த',
+            'எவ்வாறு',
+            'எவ்வளவு',
+            'எத்தனை',
+            'குறித்து',
+            'பற்றி',
+            'கூறுகிறது',
+            'கூறுக',
+            'விளக்கவும்',
+            'விளக்கம்',
+            'சொல்லவும்',
+            'தெரிவிக்கவும்',
+            'உள்ளது',
+            'உள்ளன',
+            'ஆகும்',
+            'என்பது',
+
+            'what',
+            'which',
+            'when',
+            'where',
+            'why',
+            'who',
+            'how',
+            'about',
+            'tell',
+            'explain',
+            'please',
+            'give',
+            'details',
+            'detail',
+            'does',
+            'mean',
+            'means'
+        ]);
+
+
+    const normalTerms =
+        rawTerms
+            .map(term =>
+                term.toLowerCase()
+            )
+            .filter(
+                term =>
+                    !stopWords.has(term)
+            );
+
+
+    const allTerms = [
+        ...specialTerms,
+        ...normalTerms
+    ];
+
+
+    const uniqueTerms =
+        [
+            ...new Set(
+                allTerms.filter(
+                    term =>
+                        term &&
+                        term.length >= 2
+                )
+            )
+        ];
+
+
+    if (!uniqueTerms.length) {
+
+        console.log(
+            '🔤 No useful keyword terms found'
+        );
+
+        return [];
+    }
+
+
+    console.log(
+        '🔤 Search terms:',
+        uniqueTerms
+    );
+
+
+    const regexTerms =
+        uniqueTerms.map(term =>
+            term.replace(
+                /[.*+?^${}()|[\]\\]/g,
+                '\\$&'
+            )
+        );
+
+
+    const regex =
+        regexTerms.join('|');
+
+
+    // =====================================================
+    // MONGODB QUERY
+    // =====================================================
+
+    const query = {
+
+        $or: [
+
+            {
+                text: {
+                    $regex: regex,
+                    $options: 'i'
+                }
+            },
+
+            {
+                fileName: {
+                    $regex: regex,
+                    $options: 'i'
+                }
+            }
+        ]
+    };
+
+
+    // =====================================================
+    // CATEGORY / FILE FILTER
+    // =====================================================
+
+    if (
+        Array.isArray(fileIds) &&
+        fileIds.length > 0
+    ) {
+
+        query.driveFileId = {
+            $in: fileIds
+        };
+
+        console.log(
+            `📂 Restricting keyword search to ${fileIds.length} Drive files`
+        );
+    }
+
+
+    const results =
+        await DriveChunk.find(query)
+            .select({
+                _id: 0,
+                driveFileId: 1,
+                fileName: 1,
+                driveUrl: 1,
+                chunkIndex: 1,
+                text: 1
+            })
+            .limit(200)
+            .lean();
+
+
+    console.log(
+        `🔤 Keyword raw matches: ${results.length}`
+    );
+
+
+    // =====================================================
+    // SCORE
+    // =====================================================
+
+    const scoredResults =
+        results.map(item => {
+
+            const fileName =
+                String(
+                    item.fileName || ''
+                ).toLowerCase();
+
+            const text =
+                String(
+                    item.text || ''
+                ).toLowerCase();
+
+
+            let keywordScore = 0;
+
+            const matchedTerms = [];
+
+
+            for (
+                const term
+                of uniqueTerms
             ) {
-              matchedTerms.push(term);
+
+                const termLower =
+                    term.toLowerCase();
+
+
+                const inFileName =
+                    fileName.includes(
+                        termLower
+                    );
+
+
+                const inText =
+                    text.includes(
+                        termLower
+                    );
+
+
+                const isSpecial =
+                    specialTerms.includes(
+                        term
+                    );
+
+
+                if (isSpecial) {
+
+                    if (inFileName) {
+
+                        keywordScore += 15;
+
+                        matchedTerms.push(
+                            term
+                        );
+                    }
+
+
+                    if (inText) {
+
+                        keywordScore += 10;
+
+                        if (
+                            !matchedTerms.includes(
+                                term
+                            )
+                        ) {
+
+                            matchedTerms.push(
+                                term
+                            );
+                        }
+                    }
+
+                } else {
+
+                    if (inFileName) {
+
+                        keywordScore += 5;
+
+                        matchedTerms.push(
+                            term
+                        );
+
+                    } else if (inText) {
+
+                        keywordScore += 1;
+
+                        matchedTerms.push(
+                            term
+                        );
+                    }
+                }
             }
 
-          }
 
-        }
+            const lowerQuestion =
+                cleanQuestion.toLowerCase();
 
-        // ============================================
-        // Normal keywords
-        // ============================================
 
-        else {
+            if (
+                text.includes(
+                    lowerQuestion
+                )
+            ) {
 
-          if (inFileName) {
+                keywordScore += 10;
+            }
 
-            keywordScore += 5;
 
-            matchedTerms.push(
-              term
-            );
+            // Extra legal reference weight
 
-          }
-          else if (inText) {
+            for (
+                const specialTerm
+                of specialTerms
+            ) {
 
-            keywordScore += 1;
+                if (
+                    text.includes(
+                        specialTerm
+                    )
+                ) {
 
-            matchedTerms.push(
-              term
-            );
+                    keywordScore += 20;
+                }
 
-          }
 
-        }
-      }
+                if (
+                    fileName.includes(
+                        specialTerm
+                    )
+                ) {
 
-      // =================================================
-      // Exact question phrase bonus
-      // =================================================
+                    keywordScore += 30;
+                }
+            }
 
-      const lowerQuestion =
-        cleanQuestion.toLowerCase();
 
-      if (
-        text.includes(
-          lowerQuestion
-        )
-      ) {
+            return {
 
-        keywordScore += 10;
+                ...item,
 
-      }
+                keywordScore,
 
-      // =================================================
-      // Exact G.O. number bonus
-      // =================================================
+                matchedTerms:
+                    [
+                        ...new Set(
+                            matchedTerms
+                        )
+                    ]
+            };
+        });
 
-      for (
-        const specialTerm
-        of specialTerms
-      ) {
 
-        if (
-          text.includes(
-            specialTerm
-          )
-        ) {
+    const validResults =
+        scoredResults.filter(
+            item =>
+                item.keywordScore > 0
+        );
 
-          keywordScore += 20;
 
-        }
-
-        if (
-          fileName.includes(
-            specialTerm
-          )
-        ) {
-
-          keywordScore += 30;
-
-        }
-      }
-
-      return {
-
-        ...item,
-
-        keywordScore,
-
-        matchedTerms:
-          [
-            ...new Set(
-              matchedTerms
-            )
-          ]
-
-      };
-
-    });
-
-  // ==================================================
-  // 11. Remove zero-score results
-  // ==================================================
-
-  const validResults =
-    scoredResults.filter(
-      item =>
-        item.keywordScore > 0
+    validResults.sort(
+        (a, b) =>
+            b.keywordScore -
+            a.keywordScore
     );
 
-  // ==================================================
-  // 12. Sort
-  // ==================================================
 
-  validResults.sort(
-    (a, b) =>
-      b.keywordScore -
-      a.keywordScore
-  );
+    const finalResults =
+        validResults.slice(
+            0,
+            limit
+        );
 
-  // ==================================================
-  // 13. Final results
-  // ==================================================
 
-  const finalResults =
-    validResults.slice(
-      0,
-      limit
+    console.log(
+        `🔤 Keyword results: ${finalResults.length}`
     );
 
-  console.log(
-    `🔤 Keyword results: ${finalResults.length}`
-  );
 
-  finalResults.forEach(
-    (item, index) => {
+    finalResults.forEach(
+        (item, index) => {
 
-      console.log(
-        `🔤 Keyword ${index + 1}:`,
-        item.fileName,
-        '| chunk:',
-        item.chunkIndex,
-        '| score:',
-        item.keywordScore,
-        '| matched:',
-        item.matchedTerms.join(', ')
-      );
+            console.log(
+                `🔤 Keyword ${index + 1}:`,
+                item.fileName,
+                '| chunk:',
+                item.chunkIndex,
+                '| score:',
+                item.keywordScore,
+                '| matched:',
+                item.matchedTerms.join(', ')
+            );
+        }
+    );
 
-    }
-  );
 
-  return finalResults;
+    return finalResults;
 }
-
-
 
 
 async function debugExactKeywordSearch(searchTerm) {
@@ -3559,106 +3566,142 @@ async function debugExactKeywordSearch(searchTerm) {
 ========================================================= */
 
 async function searchRelevantChunks(
-  question,
-  limit = 5
+    question,
+    limit = 5,
+    fileIds = []
 ) {
 
-  console.log(
-    '📊 Total DriveChunks:',
-    await DriveChunk.countDocuments()
-  );
-
-  console.log(
-    '📊 Valid embeddings:',
-    await DriveChunk.countDocuments({
-      embedding: { $size: 768 }
-    })
-  );
-
-
-  /*
-   * Create query embedding
-   */
-
-  const queryEmbedding =
-    await createQueryEmbedding(
-      question
+    console.log(
+        '🧠 Starting Vector Search...'
     );
 
 
-  console.log(
-    '🔎 Query embedding dimension:',
-    queryEmbedding.length
-  );
+    console.log(
+        '📊 Total DriveChunks:',
+        await DriveChunk.countDocuments()
+    );
 
 
-  /*
-   * MongoDB Atlas Vector Search
-   */
+    console.log(
+        '📊 Valid embeddings:',
+        await DriveChunk.countDocuments({
+            embedding: { $size: 768 }
+        })
+    );
 
-  const results =
-    await DriveChunk.aggregate([
 
-      {
+    const queryEmbedding =
+        await createQueryEmbedding(
+            question
+        );
+
+
+    console.log(
+        '🔎 Query embedding dimension:',
+        queryEmbedding.length
+    );
+
+
+    const vectorSearchStage = {
+
         $vectorSearch: {
 
-          index:
-            'revenue_vector_index',
+            index:
+                'revenue_vector_index',
 
-          path:
-            'embedding',
+            path:
+                'embedding',
 
-          queryVector:
-            queryEmbedding,
+            queryVector:
+                queryEmbedding,
 
-          numCandidates:
-            Math.max(
-              100,
-              limit * 20
-            ),
+            numCandidates:
+                Math.max(
+                    100,
+                    limit * 20
+                ),
 
-          limit:
-            limit
-
+            limit:
+                limit
         }
+    };
 
-      },
+
+    // =====================================================
+    // FILE FILTER
+    // =====================================================
+
+    if (
+        Array.isArray(fileIds) &&
+        fileIds.length > 0
+    ) {
+
+        vectorSearchStage.$vectorSearch.filter = {
+
+            driveFileId: {
+                $in: fileIds
+            }
+        };
 
 
-      {
-        $project: {
+        console.log(
+            `📂 Vector search restricted to ${fileIds.length} Drive files`
+        );
+    }
 
-          _id: 0,
 
-          driveFileId: 1,
+    const results =
+        await DriveChunk.aggregate([
 
-          fileName: 1,
+            vectorSearchStage,
 
-          driveUrl: 1,
+            {
+                $project: {
 
-          chunkIndex: 1,
+                    _id: 0,
 
-          text: 1,
+                    driveFileId: 1,
 
-          score: {
-            $meta:
-              'vectorSearchScore'
-          }
+                    fileName: 1,
 
+                    driveUrl: 1,
+
+                    chunkIndex: 1,
+
+                    text: 1,
+
+                    score: {
+                        $meta:
+                            'vectorSearchScore'
+                    }
+                }
+            }
+
+        ]);
+
+
+    console.log(
+        `📚 Retrieved ${results.length} relevant chunks`
+    );
+
+
+    results.forEach(
+        (item, index) => {
+
+            console.log(
+                `🧠 Vector ${index + 1}:`,
+                item.fileName,
+                '| chunk:',
+                item.chunkIndex,
+                '| score:',
+                item.score
+            );
         }
-
-      }
-
-    ]);
+    );
 
 
-  console.log(
-    `📚 Retrieved ${results.length} relevant chunks`
-  );
-
-
-  return results;
-
+    return results;
+}
 }
 function extractLegalReferences(question) {
 
