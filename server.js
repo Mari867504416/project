@@ -4938,12 +4938,20 @@ app.get(
  * OCR a PDF when normal text extraction returns no usable text.
  * Supports Tamil + English.
  */
-async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
+async function extractTextWithOCR(
+  pdfBuffer,
+  fileName = 'document.pdf'
+) {
 
   console.log(`🔍 Starting OCR: ${fileName}`);
 
-  if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) {
-    throw new Error('Invalid PDF buffer for OCR.');
+  if (
+    !pdfBuffer ||
+    !Buffer.isBuffer(pdfBuffer)
+  ) {
+    throw new Error(
+      'Invalid PDF buffer for OCR.'
+    );
   }
 
   let worker = null;
@@ -4951,8 +4959,11 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
   try {
 
     /*
-     * Load PDF
+     * ================================
+     * LOAD PDF
+     * ================================
      */
+
     const pdfData =
       new Uint8Array(pdfBuffer);
 
@@ -4967,11 +4978,11 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
 
 
     /*
-     * Create Tesseract worker
-     *
-     * tam = Tamil
-     * eng = English
+     * ================================
+     * CREATE TESSERACT WORKER
+     * ================================
      */
+
     worker =
       await createWorker(
         'tam+eng'
@@ -4982,8 +4993,11 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
 
 
     /*
-     * Process every page
+     * ================================
+     * PROCESS PAGE BY PAGE
+     * ================================
      */
+
     for (
       let pageNumber = 1;
       pageNumber <= pdf.numPages;
@@ -4994,87 +5008,255 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
         `🔎 OCR page ${pageNumber}/${pdf.numPages}: ${fileName}`
       );
 
+      let page = null;
+      let canvas = null;
+      let renderTask = null;
 
-      const page =
-        await pdf.getPage(pageNumber);
+      try {
 
-
-      /*
-       * Higher scale = better OCR
-       *
-       * 2.0 is a reasonable starting point
-       * for Render CPU usage.
-       */
-      const scale = 2.0;
-
-      const viewport =
-        page.getViewport({
-          scale
-        });
+        /*
+         * Get page
+         */
+        page =
+          await pdf.getPage(
+            pageNumber
+          );
 
 
-      /*
-       * Create image canvas
-       */
-      const canvas =
-        createCanvas(
-          Math.ceil(viewport.width),
-          Math.ceil(viewport.height)
+        /*
+         * OCR resolution
+         *
+         * Start with 1.5 to reduce
+         * Render CPU / memory usage.
+         */
+        const scale = 1.5;
+
+        const viewport =
+          page.getViewport({
+            scale
+          });
+
+
+        /*
+         * Create canvas
+         */
+        canvas =
+          createCanvas(
+            Math.ceil(
+              viewport.width
+            ),
+            Math.ceil(
+              viewport.height
+            )
+          );
+
+
+        const context =
+          canvas.getContext('2d');
+
+
+        /*
+         * Render PDF page
+         */
+        renderTask =
+          page.render({
+            canvasContext: context,
+            viewport
+          });
+
+
+        await renderTask.promise;
+
+
+        /*
+         * Convert to PNG
+         */
+        const imageBuffer =
+          canvas.toBuffer(
+            'image/png'
+          );
+
+
+        /*
+         * OCR
+         */
+        const result =
+          await worker.recognize(
+            imageBuffer
+          );
+
+
+        const pageText =
+          result?.data?.text || '';
+
+
+        console.log(
+          `📝 OCR page ${pageNumber}: ${pageText.length} characters`
         );
 
-      const context =
-        canvas.getContext('2d');
+
+        if (
+          pageText.trim()
+        ) {
+
+          fullText +=
+            `\n\n===== PAGE ${pageNumber} =====\n\n` +
+            pageText.trim();
+        }
 
 
-      /*
-       * Render PDF page to image
-       */
-      await page.render({
-        canvasContext: context,
-        viewport
-      }).promise;
+        /*
+         * ================================
+         * IMPORTANT CLEANUP
+         * ================================
+         */
+
+        /*
+         * Destroy render task safely
+         */
+        if (renderTask) {
+
+          try {
+
+            renderTask.cancel();
+
+          } catch (_) {}
+
+        }
 
 
-      /*
-       * Convert canvas to PNG
-       */
-      const imageBuffer =
-        canvas.toBuffer('image/png');
+        /*
+         * Release page
+         */
+        if (page) {
+
+          try {
+
+            page.cleanup();
+
+          } catch (_) {}
+
+        }
 
 
-      /*
-       * OCR
-       */
-      const result =
-        await worker.recognize(
-          imageBuffer
+        /*
+         * Release references
+         */
+        renderTask = null;
+        page = null;
+        canvas = null;
+
+      } catch (pageError) {
+
+        /*
+         * One page failure should NOT
+         * terminate the entire PDF OCR.
+         */
+
+        console.error(
+          `⚠️ OCR page ${pageNumber} failed:`,
+          pageError.message
         );
 
 
-      const pageText =
-        result?.data?.text || '';
+        /*
+         * Cleanup failed page
+         */
+
+        if (renderTask) {
+
+          try {
+            renderTask.cancel();
+          } catch (_) {}
+
+        }
 
 
-      console.log(
-        `📝 OCR page ${pageNumber}: ${pageText.length} characters`
-      );
+        if (page) {
+
+          try {
+            page.cleanup();
+          } catch (_) {}
+
+        }
+
+        renderTask = null;
+        page = null;
+        canvas = null;
 
 
-      if (pageText.trim()) {
+        /*
+         * Continue with next page
+         */
 
-        fullText +=
-          `\n\n===== PAGE ${pageNumber} =====\n\n` +
-          pageText.trim();
+        continue;
       }
+
+
+      /*
+       * Small delay helps Render CPU/memory
+       * for large scanned PDFs.
+       */
+
+      await new Promise(
+        resolve =>
+          setTimeout(resolve, 50)
+      );
     }
 
 
     /*
-     * Cleanup
+     * ================================
+     * CLOSE PDF
+     * ================================
      */
-    await worker.terminate();
-    worker = null;
 
+    try {
+
+      if (pdf) {
+        await pdf.cleanup();
+      }
+
+    } catch (cleanupError) {
+
+      console.log(
+        '⚠️ PDF cleanup warning:',
+        cleanupError.message
+      );
+
+    }
+
+
+    /*
+     * ================================
+     * TERMINATE TESSERACT
+     * ================================
+     */
+
+    if (worker) {
+
+      try {
+
+        await worker.terminate();
+
+      } catch (workerError) {
+
+        console.log(
+          '⚠️ Tesseract cleanup warning:',
+          workerError.message
+        );
+
+      }
+
+      worker = null;
+    }
+
+
+    /*
+     * ================================
+     * CLEAN OCR TEXT
+     * ================================
+     */
 
     const cleanedText =
       fullText
@@ -5083,6 +5265,12 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 
+
+    /*
+     * ================================
+     * CHECK RESULT
+     * ================================
+     */
 
     if (!cleanedText) {
 
@@ -5098,6 +5286,7 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
       `✅ OCR completed: ${fileName} | ${cleanedText.length} characters`
     );
 
+
     return cleanedText;
 
   } catch (error) {
@@ -5107,12 +5296,22 @@ async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
       error
     );
 
+
+    /*
+     * Safe worker cleanup
+     */
+
     if (worker) {
 
       try {
+
         await worker.terminate();
+
       } catch (_) {}
+
+      worker = null;
     }
+
 
     throw error;
   }
