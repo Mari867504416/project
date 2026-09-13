@@ -2082,6 +2082,9 @@ async function processOneDriveFile(
      * Find Drive file metadata.
      */
 
+    const drive =
+      getGoogleDriveClient();
+
     const file =
       await drive.files.get({
         fileId: driveFileId,
