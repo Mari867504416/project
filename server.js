@@ -24,6 +24,42 @@ app.set('trust proxy', 1);
 
 
 /* =========================================================
+   FRONTEND PAGE CATALOGUE
+   (mirrors the `pages` object in Revenue_Subjects.html so
+   AI search can also surface documents that exist on the
+   portal but haven't been chunked/embedded into DriveChunk
+   yet. Regenerate data/pages-catalogue.json whenever the
+   frontend's `pages` object changes.)
+========================================================= */
+
+const PAGE_CATALOGUE_PATH =
+  path.join(__dirname, 'data', 'pages-catalogue.json');
+
+let pageCatalogue = [];
+
+try {
+
+  pageCatalogue =
+    JSON.parse(
+      fs.readFileSync(PAGE_CATALOGUE_PATH, 'utf8')
+    );
+
+  console.log(
+    `📚 Loaded page catalogue: ${pageCatalogue.length} entries`
+  );
+
+} catch (error) {
+
+  console.warn(
+    '⚠️ Could not load pages-catalogue.json — catalogue fallback search disabled.',
+    error.message
+  );
+
+  pageCatalogue = [];
+}
+
+
+/* =========================================================
    GEMINI AI
 ========================================================= */
 
@@ -2962,17 +2998,149 @@ app.post(
     }
   }
 );
-/* =========================================================
-   MONGODB VECTOR SEARCH
-========================================================= */
 
-/* =========================================================
-   MONGODB VECTOR SEARCH
-========================================================= */
 
-/* =========================================================
-   MONGODB VECTOR SEARCH
-========================================================= */
+/*
+ * REGISTER FRONTEND CATALOGUE FILES FOR INDEXING
+ *
+ * Queues every Drive file referenced in the frontend's
+ * pages{} catalogue (data/pages-catalogue.json) that isn't
+ * already tracked, so the normal /admin/drive-sync/batch
+ * loop will chunk + embed it over time. This does NOT do
+ * the indexing itself — call /admin/drive-sync/batch
+ * afterwards (repeatedly) to actually process the queue.
+ */
+
+app.post(
+  '/admin/drive-sync/register-catalogue',
+  async (req, res) => {
+
+    const suppliedSecret =
+      req.headers['x-sync-secret'];
+
+    if (
+      !process.env.DRIVE_SYNC_SECRET ||
+      suppliedSecret !== process.env.DRIVE_SYNC_SECRET
+    ) {
+
+      return res.status(403).json({
+        error: 'Unauthorized.'
+      });
+    }
+
+    try {
+
+      if (!pageCatalogue.length) {
+
+        return res.json({
+          success: true,
+          checked: 0,
+          registered: 0,
+          message: 'Page catalogue is empty or not loaded.'
+        });
+      }
+
+      const drive =
+        getGoogleDriveClient();
+
+      const uniqueIds =
+        Array.from(
+          new Set(
+            pageCatalogue
+              .map(item => item.driveFileId)
+              .filter(Boolean)
+          )
+        );
+
+      const existing =
+        await DriveSyncFile.find(
+          { driveFileId: { $in: uniqueIds } },
+          { driveFileId: 1, _id: 0 }
+        ).lean();
+
+      const existingIds =
+        new Set(existing.map(f => f.driveFileId));
+
+      const newIds =
+        uniqueIds.filter(id => !existingIds.has(id));
+
+      const toRegister = [];
+      const metadataErrors = [];
+
+      for (const id of newIds) {
+
+        try {
+
+          const file =
+            await drive.files.get({
+              fileId: id,
+              fields:
+                'id,name,mimeType,modifiedTime,md5Checksum'
+            });
+
+          if (
+            file.data &&
+            file.data.mimeType === 'application/pdf'
+          ) {
+
+            toRegister.push({
+              id: file.data.id,
+              name: file.data.name,
+              modifiedTime: file.data.modifiedTime,
+              md5Checksum: file.data.md5Checksum
+            });
+          }
+
+        } catch (err) {
+
+          metadataErrors.push({
+            driveFileId: id,
+            error: err.message
+          });
+        }
+
+        // Small delay — gentle on the Drive API.
+        await new Promise(
+          resolve => setTimeout(resolve, 150)
+        );
+      }
+
+      if (toRegister.length) {
+        await registerDriveFiles(toRegister);
+      }
+
+      res.json({
+
+        success: true,
+
+        catalogueFiles:
+          uniqueIds.length,
+
+        alreadyTracked:
+          existingIds.size,
+
+        newlyRegistered:
+          toRegister.length,
+
+        metadataErrors
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Register catalogue error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
 
 /* =========================================================
    PHASE 2 - KEYWORD SEARCH
@@ -3110,7 +3278,7 @@ async function searchKeywordChunks(question, limit = 10, fileIds = []) {
       .map(term =>
         term
           .replace(
-            /[^\p{L}\p{N}.-]/gu,
+            /[^\p{L}\p{N}\p{M}.-]/gu,
             ''
           )
           .trim()
@@ -3506,6 +3674,76 @@ async function searchKeywordChunks(question, limit = 10, fileIds = []) {
   );
 
   return finalResults;
+}
+
+
+/* =========================================================
+   PAGE CATALOGUE TITLE SEARCH
+   (fallback over the frontend's pages{} list — no document
+   body text, title/link only)
+========================================================= */
+
+function searchPageCatalogue(question, limit = 8, fileIds = []) {
+
+  const cleanQuestion =
+    String(question || '')
+      .trim()
+      .replace(/\s+/g, ' ');
+
+  if (!cleanQuestion || !pageCatalogue.length) {
+    return [];
+  }
+
+  const terms =
+    cleanQuestion
+      .toLowerCase()
+      .split(/\s+/)
+      .map(term =>
+        term
+          .replace(/[^\p{L}\p{N}\p{M}.-]/gu, '')
+          .trim()
+      )
+      .filter(term => term.length >= 2);
+
+  if (!terms.length) {
+    return [];
+  }
+
+  const scoped =
+    Array.isArray(fileIds) && fileIds.length > 0
+      ? new Set(fileIds)
+      : null;
+
+  const scored = [];
+
+  for (const entry of pageCatalogue) {
+
+    if (scoped && !scoped.has(entry.driveFileId)) {
+      continue;
+    }
+
+    const haystack =
+      `${entry.groupLabel || ''} ${entry.text || ''}`
+        .toLowerCase();
+
+    let matches = 0;
+
+    for (const term of terms) {
+      if (term && haystack.includes(term)) {
+        matches++;
+      }
+    }
+
+    if (matches > 0) {
+      scored.push({ ...entry, matchedTerms: matches });
+    }
+  }
+
+  scored.sort(
+    (a, b) => b.matchedTerms - a.matchedTerms
+  );
+
+  return scored.slice(0, limit);
 }
 
 
@@ -6023,6 +6261,25 @@ app.post(
 
 
       /*
+       * CATALOGUE FALLBACK
+       * Title-only search over the frontend's pages{} list
+       * (Revenue_Subjects.html). Catches documents that exist
+       * on the portal but haven't been chunked/embedded yet.
+       */
+
+      const catalogueMatches =
+        searchPageCatalogue(
+          cleanQuestion,
+          8,
+          requestedFileIds
+        );
+
+      console.log(
+        `🗂️ Catalogue title matches: ${catalogueMatches.length}`
+      );
+
+
+      /*
        * NO RESULTS
        */
 
@@ -6030,6 +6287,31 @@ app.post(
         !relevantChunks ||
         !relevantChunks.length
       ) {
+
+        if (catalogueMatches.length) {
+
+          return res.json({
+
+            success: true,
+
+            question:
+              cleanQuestion,
+
+            answer:
+              'இந்தக் கேள்வி தொடர்பாக கிடைக்கப்பெற்ற ஆவணங்களின் முழு உள்ளடக்கத்தில் ' +
+              'AI இன்னும் தேடவில்லை. ஆனால் போர்ட்டலில் பின்வரும் ஆவணங்கள் இதே தலைப்பில் ' +
+              'உள்ளன — அவற்றை நேரடியாக பார்வையிடவும்:',
+
+            sources:
+              catalogueMatches.map(item => ({
+                fileName: item.text,
+                driveUrl: item.href,
+                indexed: false
+              }))
+
+          });
+
+        }
 
         return res.json({
 
@@ -6059,8 +6341,8 @@ app.post(
             item.fileName,
             `| chunk:`,
             item.chunkIndex,
-            `| score:`,
-            item.score
+            `| hybridScore:`,
+            item.hybridScore
           );
 
         }
@@ -6188,8 +6470,39 @@ IMPORTANT:
                 item.driveUrl,
 
               score:
-                item.score
+                item.score,
 
+              indexed: true
+
+            }
+          );
+
+        }
+
+      }
+
+
+      /*
+       * ADD CATALOGUE-ONLY MATCHES
+       * (documents whose title matches but that weren't
+       *  already surfaced via chunk/vector search)
+       */
+
+      for (
+        const item of catalogueMatches
+      ) {
+
+        const key =
+          item.driveFileId || item.href;
+
+        if (!uniqueSources.has(key)) {
+
+          uniqueSources.set(
+            key,
+            {
+              fileName: item.text,
+              driveUrl: item.href,
+              indexed: false
             }
           );
 
