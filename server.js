@@ -4449,7 +4449,7 @@ function calculateLegalReferenceScore(
 
 async function searchHybridChunks(
   question,
-  limit = 5,
+  limit = 12,
   fileIds = []
 ) {
 
@@ -4465,9 +4465,12 @@ async function searchHybridChunks(
   // ==========================================
 
   const legalReferences =
-    extractLegalReferences(
-      question
-    );
+    extractLegalReferences(question);
+
+  console.log(
+    '⚖️ Legal references:',
+    legalReferences
+  );
 
   // ==========================================
   // Run keyword + vector search
@@ -4501,11 +4504,15 @@ async function searchHybridChunks(
   );
 
   // ==========================================
-  // Merge
+  // Merge results
   // ==========================================
 
   const merged =
     new Map();
+
+  // ==========================================
+  // KEYWORD RESULTS
+  // ==========================================
 
   keywordResults.forEach(
     item => {
@@ -4534,19 +4541,24 @@ async function searchHybridChunks(
             0,
 
           legalScore:
-            legal.score,
+            Number(
+              legal.score || 0
+            ),
 
           matchedLegalReferences:
-            legal.matched,
+            legal.matched || [],
 
           hybridScore:
             (
               Number(
                 item.keywordScore || 0
-              ) * 0.20
+              ) * 0.35
             ) +
+
             (
-              legal.score * 0.70
+              Number(
+                legal.score || 0
+              ) * 0.50
             )
 
         }
@@ -4556,7 +4568,7 @@ async function searchHybridChunks(
   );
 
   // ==========================================
-  // Add vector results
+  // VECTOR RESULTS
   // ==========================================
 
   vectorResults.forEach(
@@ -4565,7 +4577,7 @@ async function searchHybridChunks(
       const key =
         `${item.driveFileId}_${item.chunkIndex}`;
 
-      const vectorScore =
+      const rawVectorScore =
         Number(
           item.score || 0
         );
@@ -4575,7 +4587,7 @@ async function searchHybridChunks(
           0,
           Math.min(
             1,
-            vectorScore
+            rawVectorScore
           )
         );
 
@@ -4591,18 +4603,19 @@ async function searchHybridChunks(
 
         existing.hybridScore =
           (
-            (existing.keywordScore || 0)
-            * 0.20
+            Number(
+              existing.keywordScore || 0
+            ) * 0.35
           ) +
 
           (
-            (existing.legalScore || 0)
-            * 0.70
+            Number(
+              existing.legalScore || 0
+            ) * 0.50
           ) +
 
           (
-            normalizedVectorScore
-            * 0.10
+            normalizedVectorScore * 0.65
           );
 
         merged.set(
@@ -4632,18 +4645,22 @@ async function searchHybridChunks(
               normalizedVectorScore,
 
             legalScore:
-              legal.score,
+              Number(
+                legal.score || 0
+              ),
 
             matchedLegalReferences:
-              legal.matched,
+              legal.matched || [],
 
             hybridScore:
               (
-                legal.score * 0.70
+                Number(
+                  legal.score || 0
+                ) * 0.50
               ) +
+
               (
-                normalizedVectorScore
-                * 0.10
+                normalizedVectorScore * 0.65
               )
 
           }
@@ -4655,7 +4672,7 @@ async function searchHybridChunks(
   );
 
   // ==========================================
-  // Rank
+  // RANK
   // ==========================================
 
   const rankedResults =
@@ -4664,28 +4681,53 @@ async function searchHybridChunks(
     ).sort(
       (a, b) => {
 
-        // Exact legal reference gets
-        // absolute priority.
+        // --------------------------------------
+        // Legal reference priority
+        // --------------------------------------
 
         if (
-          a.legalScore !==
-          b.legalScore
+          legalReferences &&
+          (
+            legalReferences.goNumbers?.length ||
+            legalReferences.sections?.length ||
+            legalReferences.rules?.length ||
+            legalReferences.dates?.length
+          )
         ) {
 
-          return (
-            b.legalScore -
-            a.legalScore
-          );
+          if (
+            a.legalScore !==
+            b.legalScore
+          ) {
+
+            return (
+              b.legalScore -
+              a.legalScore
+            );
+
+          }
 
         }
 
+        // --------------------------------------
+        // Hybrid score
+        // --------------------------------------
+
         return (
-          b.hybridScore -
-          a.hybridScore
+          Number(
+            b.hybridScore || 0
+          ) -
+          Number(
+            a.hybridScore || 0
+          )
         );
 
       }
     );
+
+  // ==========================================
+  // FINAL RESULTS
+  // ==========================================
 
   const finalResults =
     rankedResults.slice(
