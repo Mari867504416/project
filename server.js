@@ -3186,6 +3186,234 @@ async function searchRelevantChunks(
   return results;
 
 }
+
+/* =========================================================
+   PHASE 3 - HYBRID SEARCH
+   KEYWORD + VECTOR
+========================================================= */
+
+async function searchHybridChunks(
+  question,
+  limit = 5
+) {
+
+  console.log(
+    '🔀 Starting Hybrid Search...'
+  );
+
+
+  /*
+   * Run both searches
+   */
+
+  const [
+    keywordResults,
+    vectorResults
+  ] = await Promise.all([
+
+    searchKeywordChunks(
+      question,
+      10
+    ),
+
+    searchRelevantChunks(
+      question,
+      10
+    )
+
+  ]);
+
+
+  console.log(
+    `🔤 Keyword results: ${keywordResults.length}`
+  );
+
+  console.log(
+    `🧠 Vector results: ${vectorResults.length}`
+  );
+
+
+  /*
+   * Merge results
+   */
+
+  const merged =
+    new Map();
+
+
+  /*
+   * Add keyword results
+   */
+
+  keywordResults.forEach(
+    (item, index) => {
+
+      const key =
+        `${item.driveFileId}_${item.chunkIndex}`;
+
+      merged.set(
+        key,
+        {
+          ...item,
+
+          keywordScore:
+            item.keywordScore || 0,
+
+          vectorScore:
+            0,
+
+          hybridScore:
+            (item.keywordScore || 0) * 0.40
+        }
+      );
+
+    }
+  );
+
+
+  /*
+   * Add vector results
+   */
+
+  vectorResults.forEach(
+    (item, index) => {
+
+      const key =
+        `${item.driveFileId}_${item.chunkIndex}`;
+
+
+      /*
+       * Vector score returned by Atlas
+       */
+
+      const vectorScore =
+        Number(item.score || 0);
+
+
+      /*
+       * Normalize vector score
+       *
+       * Atlas cosine scores are normally
+       * between 0 and 1.
+       */
+
+      const normalizedVectorScore =
+        Math.max(
+          0,
+          Math.min(
+            1,
+            vectorScore
+          )
+        );
+
+
+      if (
+        merged.has(key)
+      ) {
+
+        const existing =
+          merged.get(key);
+
+
+        existing.vectorScore =
+          normalizedVectorScore;
+
+
+        existing.hybridScore =
+          (
+            (existing.keywordScore || 0)
+            * 0.40
+          ) +
+          (
+            normalizedVectorScore
+            * 0.60
+          );
+
+
+        merged.set(
+          key,
+          existing
+        );
+
+      } else {
+
+        merged.set(
+          key,
+          {
+
+            ...item,
+
+            keywordScore:
+              0,
+
+            vectorScore:
+              normalizedVectorScore,
+
+            hybridScore:
+              normalizedVectorScore * 0.60
+
+          }
+        );
+
+      }
+
+    }
+  );
+
+
+  /*
+   * Sort by hybrid score
+   */
+
+  const rankedResults =
+    Array.from(
+      merged.values()
+    ).sort(
+      (a, b) =>
+        b.hybridScore -
+        a.hybridScore
+    );
+
+
+  /*
+   * Final top results
+   */
+
+  const finalResults =
+    rankedResults.slice(
+      0,
+      limit
+    );
+
+
+  console.log(
+    `🔀 Hybrid results: ${finalResults.length}`
+  );
+
+
+  finalResults.forEach(
+    (item, index) => {
+
+      console.log(
+        `🔀 Hybrid ${index + 1}:`,
+        item.fileName,
+        '| chunk:',
+        item.chunkIndex,
+        '| keyword:',
+        item.keywordScore,
+        '| vector:',
+        item.vectorScore,
+        '| hybrid:',
+        item.hybridScore
+      );
+
+    }
+  );
+
+
+  return finalResults;
+
+}
 /* =========================================================
    HEALTH CHECK
 ========================================================= */
@@ -4839,11 +5067,11 @@ app.post(
        * VECTOR SEARCH
        */
 
-      const relevantChunks =
-        await searchRelevantChunks(
-          cleanQuestion,
-          5
-        );
+    const relevantChunks =
+  await searchHybridChunks(
+    cleanQuestion,
+    5
+  );
 
 
       console.log(
