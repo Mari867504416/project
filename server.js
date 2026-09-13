@@ -5868,29 +5868,25 @@ app.get(
    AI SEARCH - GEMINI RAG
 ========================================================= */
 
+/* =========================================================
+AI SEARCH - GEMINI RAG
+========================================================= */
+
 app.post(
   '/ai-search',
-  async (req, res) => {
-
-    const cleanQuestion =
-      String(req.body?.question || '')
-        .trim()
-        .replace(/\s+/g, ' ');
+  asyncHandler(async (req, res) => {
+    const cleanQuestion = String(
+      req.body?.question || ''
+    )
+      .trim()
+      .replace(/\s+/g, ' ');
 
     if (!cleanQuestion) {
-
       return res.status(400).json({
         success: false,
         error: 'Question is required.'
       });
-
     }
-
-
-    /*
-     * OPTIONAL CATEGORY SCOPE
-     * (sent by the frontend when a category tab is open)
-     */
 
     const requestedCategory =
       typeof req.body?.category === 'string'
@@ -5899,460 +5895,89 @@ app.post(
 
     const requestedFileIds =
       Array.isArray(req.body?.fileIds)
-        ? req.body.fileIds.filter(id => typeof id === 'string' && id)
+        ? req.body.fileIds.filter(
+            (id) =>
+              typeof id === 'string' &&
+              id.trim()
+          )
         : [];
-
-
-    /*
-     * NORMALIZED SEARCH KEY
-     * (scope the dedupe key by category too, so the same
-     *  question in two different categories isn't treated
-     *  as a duplicate of each other)
-     */
 
     const searchKey =
       `${requestedCategory || 'all'}::${cleanQuestion.toLowerCase()}`;
 
-
-    /*
-     * PREVENT DUPLICATE REQUEST
-     */
-
     if (activeAiSearches.has(searchKey)) {
-
-      console.log(
-        `⏭️ Duplicate AI search ignored: "${cleanQuestion}"`
-      );
-
       return res.status(409).json({
-
         success: false,
-
         duplicate: true,
-
         error:
-          'Duplicate search request. Please wait for the current search to complete.'
-
+          'Duplicate search request. Please wait.'
       });
-
     }
-
 
     activeAiSearches.set(
       searchKey,
       Date.now()
     );
 
-
     try {
-
       console.log(
-        `🔎 Question: ${cleanQuestion}`
+        `🔎 AI question: ${cleanQuestion}`
       );
-
-
-      /*
-       * STEP 1
-       * HYBRID (KEYWORD + VECTOR) SEARCH
-       * Scoped to the requested category's file IDs when the
-       * frontend has one open; otherwise searches everything.
-       */
 
       const relevantChunks =
         await searchHybridChunks(
-          cleanQuestion,
-          5,
-          requestedFileIds
-        );
-
-
-      console.log(
-        `📚 Retrieved ${relevantChunks.length} relevant chunks` +
-        (requestedCategory ? ` (category: ${requestedCategory})` : '')
-      );
-
-
-      /*
-       * CATALOGUE FALLBACK
-       * Title-only search over the frontend's pages{} list
-       * (Revenue_Subjects.html). Catches documents that exist
-       * on the portal but haven't been chunked/embedded yet.
-       */
-
-      const catalogueMatches =
-        searchPageCatalogue(
           cleanQuestion,
           8,
           requestedFileIds
         );
 
-      console.log(
-        `🗂️ Catalogue title matches: ${catalogueMatches.length}`
-      );
-
-
-      /*
-       * NO RESULTS
-       */
-
       if (
         !relevantChunks ||
         !relevantChunks.length
       ) {
-
-        if (catalogueMatches.length) {
-
-          return res.json({
-
-            success: true,
-
-            question:
-              cleanQuestion,
-
-            answer:
-              'இந்தக் கேள்வி தொடர்பாக கிடைக்கப்பெற்ற ஆவணங்களின் முழு உள்ளடக்கத்தில் ' +
-              'AI இன்னும் தேடவில்லை. ஆனால் போர்ட்டலில் பின்வரும் ஆவணங்கள் இதே தலைப்பில் ' +
-              'உள்ளன — அவற்றை நேரடியாக பார்வையிடவும்:',
-
-            sources:
-              catalogueMatches.map(item => ({
-                fileName: item.text,
-                driveUrl: item.href,
-                indexed: false
-              }))
-
-          });
-
-        }
-
         return res.json({
-
           success: true,
-
-          question:
-            cleanQuestion,
-
+          question: cleanQuestion,
           answer:
             'கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை.',
-
           sources: []
-
         });
-
       }
-       
-      /*
-       * DEBUG RETRIEVED DOCUMENTS
-       */
 
-      relevantChunks.forEach(
-        (item, index) => {
-
-          console.log(
-            `📄 Retrieved ${index + 1}:`,
-            item.fileName,
-            `| chunk:`,
-            item.chunkIndex,
-            `| hybridScore:`,
-            item.hybridScore
-          );
-
-        }
-      );
-
-
-      /*
-       * STEP 2
-       * BUILD GEMINI CONTEXT
-       */
-
-      const context =
-        relevantChunks
-          .map(
-            (item, index) => {
-
-              return `
-==============================
-SOURCE DOCUMENT ${index + 1}
-==============================
-
-FILE NAME:
-${item.fileName}
-
-CHUNK INDEX:
-${item.chunkIndex}
-
-DOCUMENT CONTENT:
-${item.text}
-
-GOOGLE DRIVE SOURCE:
-${item.driveUrl || 'Not available'}
-
-==============================
-`;
-
-            }
-          )
-          .join('\n');
-
-
-      /*
-       * STEP 3
-       * GEMINI ANSWER
-       */
-
-   const response =
-  await generateGeminiAnswer(`
-USER QUESTION
-=============
-
-${cleanQuestion}
-
-${requestedCategory
-  ? `REQUESTED CATEGORY\n===================\n\n${requestedCategory}\n\n`
-  : ''}
-
-RETRIEVED REVENUE DEPARTMENT DOCUMENTS
-======================================
-
-${context}
-
-
-TASK
-====
-
-Answer the user's question using the retrieved document content above.
-
-IMPORTANT:
-
-- Examine ALL retrieved document contents.
-- If the answer is present in ANY retrieved document, answer it.
-- Do NOT require exact wording.
-- Summarize and explain the retrieved content when appropriate.
-- Do NOT use outside knowledge.
-- Do NOT invent missing information.
-- Mention the relevant document name when useful.
-`);
       const answer =
-        typeof response.text === 'string'
-          ? response.text.trim()
-          : '';
+        await generateGeminiAnswer(
+          cleanQuestion,
+          relevantChunks
+        );
 
+      const uniqueSources = new Map();
 
-      console.log(
-        '🤖 Gemini answer length:',
-        answer.length
-      );
-
-
-      /*
-       * STEP 5
-       * UNIQUE SOURCES
-       *
-       * 5 chunks may come from the same PDF.
-       * Show that PDF only once.
-       */
-
-      const uniqueSources =
-        new Map();
-
-
-      for (
-        const item of relevantChunks
-      ) {
-
-        const key =
+      for (const item of relevantChunks) {
+        const sourceKey =
           item.driveFileId ||
           item.driveUrl ||
           item.fileName;
 
-
-        if (
-          !uniqueSources.has(key)
-        ) {
-
-          uniqueSources.set(
-            key,
-            {
-
-              fileName:
-                item.fileName,
-
-              driveUrl:
-                item.driveUrl,
-
-              score:
-                item.score,
-
-              indexed: true
-
-            }
-          );
-
+        if (!uniqueSources.has(sourceKey)) {
+          uniqueSources.set(sourceKey, {
+            fileName: item.fileName,
+            driveUrl: item.driveUrl || '',
+            indexed: true
+          });
         }
-
       }
-
-
-      /*
-       * ADD CATALOGUE-ONLY MATCHES
-       * (documents whose title matches but that weren't
-       *  already surfaced via chunk/vector search)
-       */
-
-      for (
-        const item of catalogueMatches
-      ) {
-
-        const key =
-          item.driveFileId || item.href;
-
-        if (!uniqueSources.has(key)) {
-
-          uniqueSources.set(
-            key,
-            {
-              fileName: item.text,
-              driveUrl: item.href,
-              indexed: false
-            }
-          );
-
-        }
-
-      }
-
-
-      const sources =
-        Array.from(
-          uniqueSources.values()
-        );
-
-
-      /*
-       * GEMINI RETURNED NO TEXT
-       */
-
-      if (!answer) {
-
-        return res.json({
-
-          success: true,
-
-          question:
-            cleanQuestion,
-
-          answer:
-            'கிடைக்கப்பெற்ற ஆவணங்களில் இருந்து தெளிவான பதிலை உருவாக்க முடியவில்லை.',
-
-          sources
-
-        });
-
-      }
-
-
-      /*
-       * STEP 6
-       * FINAL RESPONSE
-       */
 
       return res.json({
-
         success: true,
-
-        question:
-          cleanQuestion,
-
+        question: cleanQuestion,
         answer,
-
-        sources
-
+        sources: [...uniqueSources.values()]
       });
-
-
-    } catch (error) {
-
-      console.error(
-        '❌ Gemini RAG error:',
-        error
-      );
-/*
- * GEMINI TEMPORARY UNAVAILABLE
- */
-
-if (
-  error?.status === 503 ||
-  error?.code === 503 ||
-  error?.error?.code === 503
-) {
-
-  return res.status(503).json({
-
-    success: false,
-
-    error:
-      'Gemini AI service is temporarily unavailable. Please try again shortly.',
-
-    temporaryUnavailable: true
-
-  });
-
-}
-
-      /*
-       * GEMINI QUOTA EXCEEDED
-       */
-
-      if (
-        error?.status === 429 ||
-        error?.code === 429 ||
-        error?.error?.code === 429
-      ) {
-
-        return res.status(429).json({
-
-          success: false,
-
-          error:
-            'Gemini daily quota exceeded. Please try again after the quota resets.',
-
-          quotaExceeded: true
-
-        });
-
-      }
-
-
-      /*
-       * OTHER GEMINI/API ERRORS
-       */
-
-      return res.status(500).json({
-
-        success: false,
-
-        error:
-          'AI search is temporarily unavailable. Please try again later.'
-
-      });
-
-
     } finally {
-
-      /*
-       * REMOVE ACTIVE SEARCH
-       */
-
-      activeAiSearches.delete(
-        searchKey
-      );
-
+      activeAiSearches.delete(searchKey);
     }
-
-  }
+  })
 );
-
 /* =========================================================
    TEST KEYWORD SEARCH (debug endpoint)
 ========================================================= */
