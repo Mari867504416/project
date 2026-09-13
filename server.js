@@ -2964,64 +2964,122 @@ app.post(
    MONGODB VECTOR SEARCH
 ========================================================= */
 
-async function searchRelevantChunks(
-  question,
-  limit = 5
-) {
+/* =========================================================
+   PHASE 2 - KEYWORD SEARCH
+========================================================= */
+
+async function searchKeywordChunks(question, limit = 10) {
+
+  const cleanQuestion =
+    String(question || '')
+      .trim()
+      .replace(/\s+/g, ' ');
+
+  if (!cleanQuestion) {
+    return [];
+  }
 
   console.log(
-    '📊 Total DriveChunks:',
-    await DriveChunk.countDocuments()
+    `🔤 Keyword search: ${cleanQuestion}`
   );
 
-  console.log(
-    '📊 Valid embeddings:',
-    await DriveChunk.countDocuments({
-      embedding: { $size: 768 }
-    })
-  );
 
-  const queryEmbedding =
-    await createQueryEmbedding(question);
+  /*
+   * Split question into useful search terms
+   */
 
-  console.log(
-    '🔎 Query embedding dimension:',
-    queryEmbedding.length
-  );
+  const terms =
+    cleanQuestion
+      .split(/\s+/)
+      .map(term =>
+        term
+          .replace(/[^\p{L}\p{N}.-]/gu, '')
+          .trim()
+      )
+      .filter(term => term.length >= 2);
 
-  const results =
-    await DriveChunk.aggregate([
-      {
-        $vectorSearch: {
-          index: 'revenue_vector_index',
-          path: 'embedding',
-          queryVector: queryEmbedding,
-          numCandidates: Math.max(100, limit * 20),
-          limit: limit
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          driveFileId: 1,
-          fileName: 1,
-          driveUrl: 1,
-          chunkIndex: 1,
-          text: 1,
-          score: {
-            $meta: 'vectorSearchScore'
+
+  if (!terms.length) {
+    return [];
+  }
+
+
+  /*
+   * Escape regex characters
+   */
+
+  const escapedTerms =
+    terms.map(term =>
+      term.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&'
+      )
+    );
+
+
+  /*
+   * Search ALL important terms.
+   *
+   * $and means every term should be present.
+   */
+
+  const conditions =
+    escapedTerms.map(term => ({
+      $or: [
+        {
+          text: {
+            $regex: term,
+            $options: 'i'
+          }
+        },
+        {
+          fileName: {
+            $regex: term,
+            $options: 'i'
           }
         }
-      }
-    ]);
+      ]
+    }));
+
+
+  const results =
+    await DriveChunk.find({
+      $and: conditions
+    })
+    .select({
+      _id: 0,
+      driveFileId: 1,
+      fileName: 1,
+      driveUrl: 1,
+      chunkIndex: 1,
+      text: 1
+    })
+    .limit(limit)
+    .lean();
+
 
   console.log(
-    `📚 Retrieved ${results.length} relevant chunks`
+    `🔤 Keyword results: ${results.length}`
   );
 
-  return results;
-}
 
+  results.forEach(
+    (item, index) => {
+
+      console.log(
+        `🔤 Keyword ${index + 1}:`,
+        item.fileName,
+        '| chunk:',
+        item.chunkIndex
+      );
+
+    }
+  );
+
+
+  return results;
+
+}
 /* =========================================================
    HEALTH CHECK
 ========================================================= */
@@ -4711,8 +4769,195 @@ app.post(
         });
 
       }
+/* =========================================================
+   TEST KEYWORD SEARCH
+========================================================= */
+
+app.post(
+  '/keyword-search',
+  async (req, res) => {
+
+    try {
+
+      const question =
+        String(
+          req.body?.question || ''
+        ).trim();
 
 
+      if (!question) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          error:
+            'Question is required.'
+
+        });
+
+      }
+
+
+      const results =
+        await searchKeywordChunks(
+          question,
+          10
+        );
+
+
+      return res.json({
+
+        success: true,
+
+        question,
+
+        count:
+          results.length,
+
+        results
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        '❌ Keyword search error:',
+        error
+      );
+
+
+      return res.status(500).json({
+
+        success: false,
+
+        error:
+          'Keyword search failed.'
+
+      });
+
+    }
+
+  }
+);
+/* =========================================================
+   PHASE 2 - KEYWORD SEARCH
+========================================================= */
+
+async function searchKeywordChunks(question, limit = 10) {
+
+  const cleanQuestion =
+    String(question || '')
+      .trim()
+      .replace(/\s+/g, ' ');
+
+  if (!cleanQuestion) {
+    return [];
+  }
+
+  console.log(
+    `🔤 Keyword search: ${cleanQuestion}`
+  );
+
+
+  /*
+   * Split question into useful search terms
+   */
+
+  const terms =
+    cleanQuestion
+      .split(/\s+/)
+      .map(term =>
+        term
+          .replace(/[^\p{L}\p{N}.-]/gu, '')
+          .trim()
+      )
+      .filter(term => term.length >= 2);
+
+
+  if (!terms.length) {
+    return [];
+  }
+
+
+  /*
+   * Escape regex characters
+   */
+
+  const escapedTerms =
+    terms.map(term =>
+      term.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&'
+      )
+    );
+
+
+  /*
+   * Search ALL important terms.
+   *
+   * $and means every term should be present.
+   */
+
+  const conditions =
+    escapedTerms.map(term => ({
+      $or: [
+        {
+          text: {
+            $regex: term,
+            $options: 'i'
+          }
+        },
+        {
+          fileName: {
+            $regex: term,
+            $options: 'i'
+          }
+        }
+      ]
+    }));
+
+
+  const results =
+    await DriveChunk.find({
+      $and: conditions
+    })
+    .select({
+      _id: 0,
+      driveFileId: 1,
+      fileName: 1,
+      driveUrl: 1,
+      chunkIndex: 1,
+      text: 1
+    })
+    .limit(limit)
+    .lean();
+
+
+  console.log(
+    `🔤 Keyword results: ${results.length}`
+  );
+
+
+  results.forEach(
+    (item, index) => {
+
+      console.log(
+        `🔤 Keyword ${index + 1}:`,
+        item.fileName,
+        '| chunk:',
+        item.chunkIndex
+      );
+
+    }
+  );
+
+
+  return results;
+
+}
+       
       /*
        * DEBUG RETRIEVED DOCUMENTS
        */
