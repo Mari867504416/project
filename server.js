@@ -1333,11 +1333,11 @@ async function createQueryEmbedding(question) {
 
 async function generateGeminiAnswer(prompt) {
 
-const modelsToTry = [
-  'gemini-3.5-flash',
-  'gemini-2.5-flash',
-  'gemini-3.1-flash-lite'
-];
+  const modelsToTry = [
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite'
+  ];
 
   let lastError = null;
 
@@ -1349,16 +1349,15 @@ const modelsToTry = [
         `🤖 Trying Gemini model: ${modelName}`
       );
 
-      const response =
-        await gemini.models.generateContent({
+      const response = await gemini.models.generateContent({
 
-          model: modelName,
+        model: modelName,
 
-          contents: prompt,
+        contents: prompt,
 
-          config: {
+        config: {
 
-            systemInstruction: `
+          systemInstruction: `
 
 You are an AI assistant for the Tamil Nadu Revenue Department portal.
 
@@ -1367,43 +1366,81 @@ Answer ONLY from the retrieved documents supplied in the prompt.
 STRICT RULES:
 
 1. Use retrieved document content as the factual source.
-2. If the answer is present, answer it clearly.
-3. Do not require exact wording to appear in the document.
-4. You may summarize and explain the retrieved content.
-5. Do not invent Government Orders.
-6. Do not invent G.O. numbers.
-7. Do not invent dates.
-8. Do not invent Acts.
-9. Do not invent Rules.
-10. Do not invent Sections.
-11. Do not invent proceedings.
-12. Do not invent circular numbers.
-13. Do not use outside knowledge.
-14. If multiple retrieved documents are relevant, combine them carefully into
-    ONE coherent answer instead of listing each document separately.
-15. If information is partial, clearly state the limitation and say what is
-    missing.
-16. If the documents genuinely do not contain the answer, say:
+
+2. If the answer is present in ANY retrieved document,
+   you MUST answer the question.
+
+3. Do not say:
    "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
-17. If the question is in Tamil, answer in Tamil. If it is in English, answer
-    in English. If it mixes both, answer in the language used most in the
-    question.
-18. Mention the relevant document name when useful, but do not just repeat
-    document titles as the whole answer.
-19. Preserve exact G.O. numbers, dates, Acts, Rules, Sections and Forms
-    exactly as found in the documents — never round, reformat, or guess a
-    missing digit.
-20. If a REQUESTED CATEGORY is given in the prompt and retrieved documents
-    from other categories are more relevant, still answer from the best
-    matching content, but note that it comes from a different section.
-21. Keep the answer focused and readable: short paragraphs or a short list,
-    not a wall of text.
+   when the retrieved documents actually contain the answer.
+
+4. Do not require exact wording to appear in the document.
+
+5. You may summarize, translate and explain the retrieved content.
+
+6. Do not invent Government Orders.
+
+7. Do not invent G.O. numbers.
+
+8. Do not invent dates.
+
+9. Do not invent Acts.
+
+10. Do not invent Rules.
+
+11. Do not invent Sections.
+
+12. Do not invent proceedings.
+
+13. Do not invent circular numbers.
+
+14. Do not use outside knowledge.
+
+15. If multiple retrieved documents are relevant,
+    combine them carefully into ONE coherent answer.
+
+16. If information is partial,
+    clearly state what information is available and what is missing.
+
+17. Only say:
+    "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
+    when NONE of the retrieved documents contains the answer.
+
+18. If the question is in Tamil, answer in Tamil.
+
+19. If the question is in English, answer in English.
+
+20. If the question mixes Tamil and English,
+    answer mainly in the language used most in the question.
+
+21. Mention the relevant document name and G.O. number when useful.
+
+22. Do not just list document titles.
+    Explain the relevant content.
+
+23. Preserve exact G.O. numbers, dates, Acts, Rules,
+    Sections and Forms exactly as found in the documents.
+
+24. Never guess a missing digit or date.
+
+25. If a retrieved document directly answers the question,
+    prioritize that document even if other retrieved documents
+    are unrelated.
+
+26. Keep the answer focused and readable.
+
+27. For Government Orders, whenever possible give:
+    - G.O. Number
+    - Date
+    - Subject / purpose
+    - Relevant provision
+    - Authority / procedure, if available in the document.
 
 `
 
-          }
+        }
 
-        });
+      });
 
       console.log(
         `✅ Gemini answer generated using: ${modelName}`
@@ -1426,37 +1463,31 @@ STRICT RULES:
         error?.message || error
       );
 
-
       /*
-       * 429 = QUOTA EXCEEDED
-       * 503 = TEMPORARILY UNAVAILABLE
+       * Temporary / unavailable models
        */
 
-     if (
-  status === 429 ||
-  status === 503 ||
-  status === 404
-) {
+      if (
+        status === 429 ||
+        status === 503 ||
+        status === 404
+      ) {
 
-  console.log(
-    `🔄 ${modelName} unavailable (${status}). Trying next model...`
-  );
+        console.log(
+          `🔄 ${modelName} unavailable (${status}). Trying next model...`
+        );
 
-  continue;
-}
-
+        continue;
+      }
 
       /*
-       * Other errors should not silently
-       * switch models.
+       * Other errors:
+       * Do not silently switch models.
        */
 
       throw error;
-
     }
-
   }
-
 
   /*
    * ALL MODELS FAILED
@@ -1466,10 +1497,20 @@ STRICT RULES:
     '❌ All Gemini models failed.'
   );
 
-  throw lastError;
+  /*
+   * Keep the original error available for logging,
+   * but return a controlled error to the API layer.
+   */
 
+  const controlledError = new Error(
+    'Gemini answer generation is temporarily unavailable.'
+  );
+
+  controlledError.status = 503;
+  controlledError.originalError = lastError;
+
+  throw controlledError;
 }
-
 /* =========================================================
    INDEX ONE PDF
 ========================================================= */
