@@ -1404,17 +1404,7 @@ async function createQueryEmbedding(question) {
    GEMINI GENERATE CONTENT
    3-MODEL FALLBACK
 ========================================================= */
-const catalogueResults = searchCatalogue(question);
 
-console.log(
-  '📚 Catalogue matches:',
-  catalogueResults.slice(0, 10).map(x => ({
-    text: x.text,
-    category: x.category,
-    driveFileId: x.driveFileId,
-    score: x.score
-  }))
-);
 async function generateGeminiAnswer(prompt) {
 
   const modelsToTry = [
@@ -6344,7 +6334,22 @@ app.post(
       });
 
     }
+    // ==========================================
+    // CATALOGUE SEARCH
+    // ==========================================
 
+    const catalogueResults =
+      searchCatalogue(cleanQuestion);
+
+    console.log(
+      '📚 Catalogue matches:',
+      catalogueResults.slice(0, 10).map(x => ({
+        text: x.text,
+        category: x.category,
+        driveFileId: x.driveFileId,
+        score: x.score
+      }))
+    );
 
     /*
      * OPTIONAL CATEGORY SCOPE
