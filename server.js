@@ -17,7 +17,9 @@ const pdfParse = require('pdf-parse');
 
 const app = express();
 const activeAiSearches = new Map();
-
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { createCanvas } = require('@napi-rs/canvas');
+const { createWorker } = require('tesseract.js');
 const AI_SEARCH_DUPLICATE_WINDOW = 5000;
 
 app.set('trust proxy', 1);
@@ -1631,34 +1633,113 @@ async function indexDrivePdf(file) {
     ===================================================== */
 
     const pdfData =
-      await pdfParse(
-        pdfBuffer
+  await pdfParse(
+    pdfBuffer
+  );
+
+let text =
+  pdfData.text || '';
+
+
+/*
+ * NORMAL PDF TEXT EXTRACTION
+ */
+
+if (text.trim()) {
+
+  console.log(
+    `✅ Text extracted normally: ${file.name} | ${text.length} characters`
+  );
+
+}
+
+
+/*
+ * OCR FALLBACK
+ *
+ * If normal PDF extraction returns no text,
+ * try OCR for scanned/image PDFs.
+ */
+
+if (!text.trim()) {
+
+  console.log(
+    `⚠️ No text found: ${file.name}`
+  );
+
+  console.log(
+    `🔍 Trying OCR fallback: ${file.name}`
+  );
+
+  try {
+
+    text =
+      await extractTextWithOCR(
+        pdfBuffer,
+        file.name
       );
 
+  } catch (ocrError) {
 
-    const text =
-      pdfData.text || '';
+    console.error(
+      `❌ OCR failed: ${file.name}`,
+      ocrError
+    );
+
+    return {
+
+      success: false,
+
+      reason:
+        `OCR failed: ${ocrError.message}`
+
+    };
+
+  }
+
+}
 
 
-    if (!text.trim()) {
+/*
+ * FINAL CHECK
+ *
+ * If both normal extraction and OCR
+ * failed, mark the PDF as failed.
+ */
 
-      console.log(
-        `⚠️ No text found: ${file.name}`
-      );
+if (!text || !text.trim()) {
+
+  console.log(
+    `❌ No usable text after PDF extraction + OCR: ${file.name}`
+  );
+
+  return {
+
+    success: false,
+
+    reason:
+      'No text found in PDF even after OCR.'
+
+  };
+
+}
 
 
-      return {
+/*
+ * CLEAN TEXT
+ */
 
-        success:
-          false,
+text =
+  text
+    .replace(/\r/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
-        reason:
-          'No text found in PDF.'
 
-      };
-
-    }
-
+console.log(
+  `📄 Final text length: ${text.length} characters`
+);
 
     /* =====================================================
        SPLIT TEXT INTO CHUNKS
@@ -4853,7 +4934,189 @@ app.get(
   }
 );
 
+/**
+ * OCR a PDF when normal text extraction returns no usable text.
+ * Supports Tamil + English.
+ */
+async function extractTextWithOCR(pdfBuffer, fileName = 'document.pdf') {
 
+  console.log(`🔍 Starting OCR: ${fileName}`);
+
+  if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) {
+    throw new Error('Invalid PDF buffer for OCR.');
+  }
+
+  let worker = null;
+
+  try {
+
+    /*
+     * Load PDF
+     */
+    const pdfData =
+      new Uint8Array(pdfBuffer);
+
+    const pdf =
+      await pdfjsLib.getDocument({
+        data: pdfData
+      }).promise;
+
+    console.log(
+      `📄 OCR PDF pages: ${pdf.numPages}`
+    );
+
+
+    /*
+     * Create Tesseract worker
+     *
+     * tam = Tamil
+     * eng = English
+     */
+    worker =
+      await createWorker(
+        'tam+eng'
+      );
+
+
+    let fullText = '';
+
+
+    /*
+     * Process every page
+     */
+    for (
+      let pageNumber = 1;
+      pageNumber <= pdf.numPages;
+      pageNumber++
+    ) {
+
+      console.log(
+        `🔎 OCR page ${pageNumber}/${pdf.numPages}: ${fileName}`
+      );
+
+
+      const page =
+        await pdf.getPage(pageNumber);
+
+
+      /*
+       * Higher scale = better OCR
+       *
+       * 2.0 is a reasonable starting point
+       * for Render CPU usage.
+       */
+      const scale = 2.0;
+
+      const viewport =
+        page.getViewport({
+          scale
+        });
+
+
+      /*
+       * Create image canvas
+       */
+      const canvas =
+        createCanvas(
+          Math.ceil(viewport.width),
+          Math.ceil(viewport.height)
+        );
+
+      const context =
+        canvas.getContext('2d');
+
+
+      /*
+       * Render PDF page to image
+       */
+      await page.render({
+        canvasContext: context,
+        viewport
+      }).promise;
+
+
+      /*
+       * Convert canvas to PNG
+       */
+      const imageBuffer =
+        canvas.toBuffer('image/png');
+
+
+      /*
+       * OCR
+       */
+      const result =
+        await worker.recognize(
+          imageBuffer
+        );
+
+
+      const pageText =
+        result?.data?.text || '';
+
+
+      console.log(
+        `📝 OCR page ${pageNumber}: ${pageText.length} characters`
+      );
+
+
+      if (pageText.trim()) {
+
+        fullText +=
+          `\n\n===== PAGE ${pageNumber} =====\n\n` +
+          pageText.trim();
+      }
+    }
+
+
+    /*
+     * Cleanup
+     */
+    await worker.terminate();
+    worker = null;
+
+
+    const cleanedText =
+      fullText
+        .replace(/\r/g, '')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+
+    if (!cleanedText) {
+
+      console.log(
+        `⚠️ OCR also found no text: ${fileName}`
+      );
+
+      return '';
+    }
+
+
+    console.log(
+      `✅ OCR completed: ${fileName} | ${cleanedText.length} characters`
+    );
+
+    return cleanedText;
+
+  } catch (error) {
+
+    console.error(
+      `❌ OCR failed: ${fileName}`,
+      error
+    );
+
+    if (worker) {
+
+      try {
+        await worker.terminate();
+      } catch (_) {}
+    }
+
+    throw error;
+  }
+}
 /* =========================================================
    ADMIN LOGIN
 ========================================================= */
