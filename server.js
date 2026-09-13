@@ -1297,11 +1297,10 @@ async function createQueryEmbedding(question) {
 
 async function generateGeminiAnswer(prompt) {
 
-  const modelsToTry = [
-    'gemini-3.6-flash',
-    'gemini-2.5-flash',
-    'gemini-3.5-flash-lite'
-  ];
+const modelsToTry = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite'
+];
 
   let lastError = null;
 
@@ -1386,18 +1385,18 @@ STRICT RULES:
        * 503 = TEMPORARILY UNAVAILABLE
        */
 
-      if (
-        status === 429 ||
-        status === 503
-      ) {
+     if (
+  status === 429 ||
+  status === 503 ||
+  status === 404
+) {
 
-        console.log(
-          `🔄 ${modelName} unavailable. Trying next model...`
-        );
+  console.log(
+    `🔄 ${modelName} unavailable (${status}). Trying next model...`
+  );
 
-        continue;
-
-      }
+  continue;
+}
 
 
       /*
