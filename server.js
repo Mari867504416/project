@@ -72,7 +72,213 @@ const gemini = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
 
+/* =========================================================
+AI SEARCH HELPERS
+========================================================= */
 
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeDocumentText(value) {
+  return normalizeSearchText(value)
+    .replace(/[“”"'`]/g, '')
+    .replace(/[(){}\[\],;:]/g, ' ');
+}
+
+function getDocumentSearchTerms(question) {
+  const text = String(question || '').trim();
+  const terms = new Set();
+
+  const add = (value) => {
+    if (value) {
+      terms.add(normalizeSearchText(value));
+    }
+  };
+
+  const goMatches = text.match(
+    /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:Ms\.?\s*)?(?:No\.?\s*)?\.?\s*\d+(?:\/\d+)?/gi
+  );
+
+  if (goMatches) {
+    for (const match of goMatches) {
+      add(match);
+      add(match.replace(/\s+/g, ''));
+      add(`g.o.${match.match(/\d+(?:\/\d+)?/)?.[0] || ''}`);
+      add(match.match(/\d+(?:\/\d+)?/)?.[0] || '');
+    }
+  }
+
+  const dateMatches = text.match(
+    /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g
+  );
+
+  if (dateMatches) {
+    dateMatches.forEach(add);
+  }
+
+  const sectionMatches = text.match(
+    /\b(?:section|sec\.?)\s*\d+(?:-[a-z])?(?:\([a-z0-9]+\))?/gi
+  );
+
+  if (sectionMatches) {
+    sectionMatches.forEach(add);
+  }
+
+  const ruleMatches = text.match(
+    /\b(?:rule|rules)\s*\d+(?:\([a-z0-9]+\))?/gi
+  );
+
+  if (ruleMatches) {
+    ruleMatches.forEach(add);
+  }
+
+  const stopWords = new Set([
+    'எது',
+    'என்ன',
+    'எப்படி',
+    'எங்கே',
+    'எப்போது',
+    'எதற்கு',
+    'எதனால்',
+    'எதற்காக',
+    'யார்',
+    'யாருடைய',
+    'யாருக்கு',
+    'யாரால்',
+    'எந்த',
+    'எவ்வாறு',
+    'எவ்வளவு',
+    'எத்தனை',
+    'குறித்து',
+    'பற்றி',
+    'கூறுகிறது',
+    'கூறுக',
+    'விளக்கவும்',
+    'விளக்கம்',
+    'சொல்லவும்',
+    'தெரிவிக்கவும்',
+    'உள்ளது',
+    'உள்ளன',
+    'ஆகும்',
+    'என்பது',
+    'what',
+    'which',
+    'when',
+    'where',
+    'why',
+    'who',
+    'how',
+    'about',
+    'tell',
+    'explain',
+    'please',
+    'give',
+    'details',
+    'detail',
+    'does',
+    'mean',
+    'means'
+  ]);
+
+  const normalTerms = text
+    .split(/\s+/)
+    .map((term) =>
+      term
+        .replace(/[^\p{L}\p{N}\p{M}.-]/gu, '')
+        .toLowerCase()
+        .trim()
+    )
+    .filter((term) => term.length >= 2 && !stopWords.has(term));
+
+  normalTerms.forEach(add);
+
+  return [...terms].filter(Boolean);
+}
+
+function calculateDirectDocumentScore(item, question) {
+  const fileName = normalizeDocumentText(item.fileName);
+  const text = normalizeDocumentText(item.text);
+  const questionText = normalizeDocumentText(question);
+
+  let score = 0;
+  const matchedTerms = [];
+
+  const directPhrases = [
+    'grant of patta',
+    'grant patta',
+    'continuous possession',
+    'continuous possession and enjoyment',
+    'possession and enjoyment',
+    'inam estate',
+    'minor inam',
+    'minor inams',
+    'act 26 of 1963',
+    'act 30 of 1963',
+    'g.o.ms.no.370',
+    'g.o. ms. no. 370',
+    'g.o.370',
+    '03.10.1974',
+    '3.10.74',
+    '3/10/74',
+    'patta'
+  ];
+
+  for (const phrase of directPhrases) {
+    const inText = text.includes(phrase);
+    const inFileName = fileName.includes(phrase);
+
+    if (inText) {
+      score += 100;
+      matchedTerms.push(phrase);
+    }
+
+    if (inFileName) {
+      score += 200;
+      matchedTerms.push(`filename:${phrase}`);
+    }
+  }
+
+  if (
+    questionText.includes('patta') &&
+    text.includes('patta')
+  ) {
+    score += 300;
+  }
+
+  if (
+    questionText.includes('continuous possession') &&
+    text.includes('continuous possession')
+  ) {
+    score += 400;
+  }
+
+  if (
+    questionText.includes('minor inam') &&
+    text.includes('minor inam')
+  ) {
+    score += 300;
+  }
+
+  if (
+    text.includes('act 26 of 1963') &&
+    text.includes('act 30 of 1963')
+  ) {
+    score += 300;
+  }
+
+  return {
+    score,
+    matchedTerms: [...new Set(matchedTerms)]
+  };
+}
 /* =========================================================
    MIDDLEWARE
 ========================================================= */
@@ -1331,88 +1537,115 @@ async function createQueryEmbedding(question) {
    3-MODEL FALLBACK
 ========================================================= */
 
-async function generateGeminiAnswer(prompt) {
+/* =========================================================
+GEMINI ANSWER GENERATION
+========================================================= */
 
-const modelsToTry = [
-  'gemini-3.5-flash',
-  'gemini-2.5-flash',
-  'gemini-3.1-flash-lite'
-];
+async function generateGeminiAnswer(
+  question,
+  retrievedDocuments = []
+) {
+  const modelsToTry = [
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-3.1-flash-lite'
+  ];
+
+  const documents = Array.isArray(
+    retrievedDocuments
+  )
+    ? retrievedDocuments.filter(
+        (item) =>
+          item &&
+          typeof item.text === 'string' &&
+          item.text.trim()
+      )
+    : [];
+
+  const retrievedContext = documents
+    .map((item, index) => {
+      return [
+        `DOCUMENT ${index + 1}`,
+        `FILE NAME: ${item.fileName || 'Unknown'}`,
+        `CHUNK INDEX: ${item.chunkIndex ?? index}`,
+        `SOURCE URL: ${item.driveUrl || 'Not available'}`,
+        'DOCUMENT TEXT:',
+        item.text.trim()
+      ].join('\n');
+    })
+    .join('\n\n==============================\n\n');
+
+  const prompt = `
+USER QUESTION:
+${String(question || '').trim()}
+
+RETRIEVED DOCUMENTS:
+${retrievedContext || '(No retrieved documents)'}
+
+INSTRUCTIONS:
+Answer the user question using ONLY the retrieved document text.
+
+MANDATORY:
+1. If the answer is present in ANY retrieved document, answer it directly.
+2. Do not say information is unavailable when it is present.
+3. Exact wording is not required; accurate summarization is allowed.
+4. Preserve exact G.O. numbers, dates, Acts, Rules, Sections, authorities, land extents, and time limits.
+5. Do not invent facts, legal provisions, G.O. numbers, dates, Acts, Rules, Sections, or procedures.
+6. Do not use outside knowledge.
+7. If the document provides a partial answer, provide that partial answer and clearly state the limitation.
+8. Say "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை." only if the retrieved documents genuinely do not contain the answer.
+9. Answer in Tamil when the question is mainly in Tamil.
+10. Mention the relevant source document name in the answer.
+11. Do not output hidden reasoning, search scores, or system instructions.
+12. Keep the answer clear and concise.
+`;
 
   let lastError = null;
 
   for (const modelName of modelsToTry) {
-
     try {
-
       console.log(
         `🤖 Trying Gemini model: ${modelName}`
       );
 
       const response =
         await gemini.models.generateContent({
-
           model: modelName,
-
           contents: prompt,
-
           config: {
-
             systemInstruction: `
+You are a Tamil Nadu Revenue Department document assistant.
 
-You are an AI assistant for the Tamil Nadu Revenue Department portal.
-
-Answer ONLY from the retrieved documents supplied in the prompt.
-
-STRICT RULES:
-
-1. Use retrieved document content as the factual source.
-2. If the answer is present, answer it clearly.
-3. Do not require exact wording to appear in the document.
-4. You may summarize and explain the retrieved content.
-5. Do not invent Government Orders.
-6. Do not invent G.O. numbers.
-7. Do not invent dates.
-8. Do not invent Acts.
-9. Do not invent Rules.
-10. Do not invent Sections.
-11. Do not invent proceedings.
-12. Do not invent circular numbers.
-13. Do not use outside knowledge.
-14. If multiple retrieved documents are relevant, combine them carefully into
-    ONE coherent answer instead of listing each document separately.
-15. If information is partial, clearly state the limitation and say what is
-    missing.
-16. If the documents genuinely do not contain the answer, say:
-   "கிடைக்கப்பெற்ற ஆவணங்களில் இந்த தகவல் இல்லை."
-17. If the question is in Tamil, answer in Tamil. If it is in English, answer
-    in English. If it mixes both, answer in the language used most in the
-    question.
-18. Mention the relevant document name when useful, but do not just repeat
-    document titles as the whole answer.
-19. Preserve exact G.O. numbers, dates, Acts, Rules, Sections and Forms
-    exactly as found in the documents — never round, reformat, or guess a
-    missing digit.
-20. If a REQUESTED CATEGORY is given in the prompt and retrieved documents
-    from other categories are more relevant, still answer from the best
-    matching content, but note that it comes from a different section.
-21. Keep the answer focused and readable: short paragraphs or a short list,
-    not a wall of text.
-
-`
-
+Answer only from the retrieved documents.
+If a matching document is present, answer from it.
+Never use outside knowledge.
+Never return "information not available" when the answer exists in the supplied documents.
+            `,
+            temperature: 0.1,
+            maxOutputTokens: 2048
           }
-
         });
 
+      const answer =
+        typeof response?.text === 'string'
+          ? response.text.trim()
+          : response?.candidates?.[0]?.content?.parts
+              ?.map((part) => part.text || '')
+              .join('')
+              .trim();
+
+      if (!answer) {
+        throw new Error(
+          'Gemini returned an empty answer.'
+        );
+      }
+
       console.log(
-        `✅ Gemini answer generated using: ${modelName}`
+        `✅ Gemini answer generated: ${modelName}`
       );
 
-      return response;
-
+      return answer;
     } catch (error) {
-
       lastError = error;
 
       const status =
@@ -1421,58 +1654,26 @@ STRICT RULES:
         error?.error?.code;
 
       console.error(
-        `⚠️ ${modelName} failed:`,
+        `⚠️ Gemini failed: ${modelName}`,
         status,
-        error?.message || error
+        error.message
       );
 
-
-      /*
-       * 429 = QUOTA EXCEEDED
-       * 503 = TEMPORARILY UNAVAILABLE
-       */
-
-     if (
-  status === 429 ||
-  status === 503 ||
-  status === 404
-) {
-
-  console.log(
-    `🔄 ${modelName} unavailable (${status}). Trying next model...`
-  );
-
-  continue;
-}
-
-
-      /*
-       * Other errors should not silently
-       * switch models.
-       */
+      if (
+        status === 429 ||
+        status === 503 ||
+        status === 404
+      ) {
+        continue;
+      }
 
       throw error;
-
     }
-
   }
 
-
-  /*
-   * ALL MODELS FAILED
-   */
-
-  console.error(
-    '❌ All Gemini models failed.'
-  );
-
-  throw lastError;
-
+  throw lastError ||
+    new Error('All Gemini models failed.');
 }
-
-/* =========================================================
-   INDEX ONE PDF
-========================================================= */
 
 /* =========================================================
    INDEX ONE PDF
@@ -3149,536 +3350,145 @@ app.post(
    PHASE 2 - KEYWORD SEARCH
 ========================================================= */
 
-async function searchKeywordChunks(question, limit = 10, fileIds = []) {
+/* =========================================================
+KEYWORD SEARCH
+========================================================= */
 
-  const cleanQuestion =
-    String(question || '')
-      .trim()
-      .replace(/\s+/g, ' ');
+async function searchKeywordChunks(
+  question,
+  limit = 20,
+  fileIds = []
+) {
+  const cleanQuestion = String(question || '')
+    .trim()
+    .replace(/\s+/g, ' ');
 
   if (!cleanQuestion) {
     return [];
   }
 
-  console.log(
-    `🔤 Keyword search: ${cleanQuestion}`
-  );
+  const terms = getDocumentSearchTerms(cleanQuestion);
 
-  // ==================================================
-  // 1. Extract special legal / government references
-  // ==================================================
-
-  const specialTerms = [];
-
-  // G.O.175
-  // G.O. 175
-  // G.O.Ms.No.175
-  // G.O.(Ms) No.175
-  // GO 175
-  // GOMS 175
-
-  const goMatches =
-    cleanQuestion.match(
-      /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:Ms\.?\s*)?(?:No\.?\s*)?\.?\s*\d+(?:\/\d+)?/gi
-    );
-
-  if (goMatches) {
-
-    for (const match of goMatches) {
-
-      const normalized =
-        match
-          .replace(/\s+/g, '')
-          .replace(/\(\s*/g, '(')
-          .replace(/\s*\)/g, ')')
-          .toLowerCase();
-
-      specialTerms.push(normalized);
-
-      // Also extract the numerical G.O. number
-      const numberMatch =
-        match.match(/\d+(?:\/\d+)?/);
-
-      if (numberMatch) {
-        specialTerms.push(
-          `go${numberMatch[0]}`
-        );
-
-        specialTerms.push(
-          numberMatch[0]
-        );
-      }
-    }
-  }
-
-  // ==================================================
-  // 2. Section numbers
-  // ==================================================
-
-  const sectionMatches =
-    cleanQuestion.match(
-      /\b(?:section|sec\.?)\s*\d+(?:-[a-z])?(?:\([a-z0-9]+\))?/gi
-    );
-
-  if (sectionMatches) {
-
-    for (const match of sectionMatches) {
-
-      specialTerms.push(
-        match
-          .replace(/\s+/g, '')
-          .toLowerCase()
-      );
-
-    }
-  }
-
-  // ==================================================
-  // 3. Rule numbers
-  // ==================================================
-
-  const ruleMatches =
-    cleanQuestion.match(
-      /\b(?:rule|rules)\s*\d+(?:\([a-z0-9]+\))?/gi
-    );
-
-  if (ruleMatches) {
-
-    for (const match of ruleMatches) {
-
-      specialTerms.push(
-        match
-          .replace(/\s+/g, '')
-          .toLowerCase()
-      );
-
-    }
-  }
-
-  // ==================================================
-  // 4. Date detection
-  // ==================================================
-
-  const dateMatches =
-    cleanQuestion.match(
-      /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g
-    );
-
-  if (dateMatches) {
-
-    for (const date of dateMatches) {
-      specialTerms.push(date);
-    }
-  }
-
-  // ==================================================
-  // 5. Normal keyword extraction
-  // ==================================================
-
-  const rawTerms =
-    cleanQuestion
-      .split(/\s+/)
-      .map(term =>
-        term
-          .replace(
-            /[^\p{L}\p{N}\p{M}.-]/gu,
-            ''
-          )
-          .trim()
-      )
-      .filter(
-        term =>
-          term.length >= 3
-      );
-
-  // ==================================================
-  // 6. Tamil question words to ignore
-  // ==================================================
-
-  const stopWords = new Set([
-
-    // Tamil question words
-    'எதை',
-    'எது',
-    'என்ன',
-    'எப்படி',
-    'எங்கே',
-    'எப்போது',
-    'எதற்கு',
-    'எதனால்',
-    'எதற்காக',
-    'யார்',
-    'யாருடைய',
-    'யாருக்கு',
-    'யாரால்',
-    'எந்த',
-    'எவ்வாறு',
-    'எவ்வளவு',
-    'எத்தனை',
-    'குறித்து',
-    'பற்றி',
-    'கூறுகிறது',
-    'கூறுக',
-    'விளக்கவும்',
-    'விளக்கம்',
-    'சொல்லவும்',
-    'தெரிவிக்கவும்',
-    'உள்ளது',
-    'உள்ளன',
-    'ஆகும்',
-    'என்பது',
-
-    // English question words
-    'what',
-    'which',
-    'when',
-    'where',
-    'why',
-    'who',
-    'how',
-    'about',
-    'tell',
-    'explain',
-    'please',
-    'give',
-    'details',
-    'detail',
-    'does',
-    'mean',
-    'means'
-  ]);
-
-  const normalTerms =
-    rawTerms
-      .map(term =>
-        term.toLowerCase()
-      )
-      .filter(
-        term =>
-          !stopWords.has(term)
-      );
-
-  // ==================================================
-  // 7. Combine special + normal terms
-  // ==================================================
-
-  const allTerms =
-    [
-      ...specialTerms,
-      ...normalTerms
-    ];
-
-  const uniqueTerms =
-    [
-      ...new Set(
-        allTerms.filter(
-          term => term && term.length >= 2
-        )
-      )
-    ];
-
-  if (!uniqueTerms.length) {
-
-    console.log(
-      '🔤 No useful keyword terms found'
-    );
-
+  if (!terms.length) {
     return [];
   }
 
-  console.log(
-    '🔤 Search terms:',
-    uniqueTerms
-  );
+  console.log('🔤 Search terms:', terms);
 
-  // ==================================================
-  // 8. Build regex
-  // ==================================================
-
-  const regexTerms =
-    uniqueTerms.map(term =>
-      term.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        '\\$&'
-      )
-    );
-
-  const regex =
-    regexTerms.join('|');
-
-  // ==================================================
-  // 9. MongoDB keyword search
-  // ==================================================
+  const regex = terms
+    .map(escapeRegex)
+    .join('|');
 
   const keywordQuery = {
-
     $or: [
-
       {
         text: {
           $regex: regex,
           $options: 'i'
         }
       },
-
       {
         fileName: {
           $regex: regex,
           $options: 'i'
         }
       }
-
     ]
-
   };
 
-  // Scope to a specific category's files, when the frontend
-  // has one open (window.currentAIFileIds).
   if (Array.isArray(fileIds) && fileIds.length) {
-    keywordQuery.driveFileId = { $in: fileIds };
+    keywordQuery.driveFileId = {
+      $in: fileIds
+    };
   }
 
-  const results =
-    await DriveChunk.find(keywordQuery)
+  const results = await DriveChunk.find(keywordQuery)
     .select({
-
       _id: 0,
-
       driveFileId: 1,
-
       fileName: 1,
-
       driveUrl: 1,
-
       chunkIndex: 1,
-
       text: 1
-
     })
-    .limit(200)
+    .limit(500)
     .lean();
 
-  console.log(
-    `🔤 Keyword raw matches: ${results.length}`
-  );
+  const scoredResults = results.map((item) => {
+    const fileName = normalizeDocumentText(item.fileName);
+    const text = normalizeDocumentText(item.text);
 
-  // ==================================================
-  // 10. Score results
-  // ==================================================
+    let keywordScore = 0;
+    const matchedTerms = [];
 
-  const scoredResults =
-    results.map(item => {
+    for (const term of terms) {
+      const termText = normalizeDocumentText(term);
 
-      const fileName =
-        String(
-          item.fileName || ''
-        ).toLowerCase();
-
-      const text =
-        String(
-          item.text || ''
-        ).toLowerCase();
-
-      let keywordScore = 0;
-
-      const matchedTerms = [];
-
-      for (const term of uniqueTerms) {
-
-        const termLower =
-          term.toLowerCase();
-
-        const inFileName =
-          fileName.includes(
-            termLower
-          );
-
-        const inText =
-          text.includes(
-            termLower
-          );
-
-        // ============================================
-        // Special legal references
-        // ============================================
-
-        const isSpecial =
-          specialTerms.includes(
-            term
-          );
-
-        if (isSpecial) {
-
-          if (inFileName) {
-
-            keywordScore += 15;
-
-            matchedTerms.push(
-              term
-            );
-
-          }
-
-          if (inText) {
-
-            keywordScore += 10;
-
-            if (
-              !matchedTerms.includes(term)
-            ) {
-              matchedTerms.push(term);
-            }
-
-          }
-
-        }
-
-        // ============================================
-        // Normal keywords
-        // ============================================
-
-        else {
-
-          if (inFileName) {
-
-            keywordScore += 5;
-
-            matchedTerms.push(
-              term
-            );
-
-          }
-          else if (inText) {
-
-            keywordScore += 1;
-
-            matchedTerms.push(
-              term
-            );
-
-          }
-
-        }
+      if (fileName.includes(termText)) {
+        keywordScore += 30;
+        matchedTerms.push(`filename:${term}`);
       }
 
-      // =================================================
-      // Exact question phrase bonus
-      // =================================================
-
-      const lowerQuestion =
-        cleanQuestion.toLowerCase();
-
-      if (
-        text.includes(
-          lowerQuestion
-        )
-      ) {
-
+      if (text.includes(termText)) {
         keywordScore += 10;
+        matchedTerms.push(term);
+      }
+    }
 
+    const direct = calculateDirectDocumentScore(
+      item,
+      cleanQuestion
+    );
+
+    const lowerQuestion = normalizeDocumentText(cleanQuestion);
+
+    if (
+      lowerQuestion.length > 8 &&
+      text.includes(lowerQuestion)
+    ) {
+      keywordScore += 100;
+    }
+
+    return {
+      ...item,
+      keywordScore,
+      directScore: direct.score,
+      matchedDirectTerms: direct.matchedTerms,
+      matchedTerms: [...new Set(matchedTerms)]
+    };
+  });
+
+  const validResults = scoredResults
+    .filter(
+      (item) =>
+        item.keywordScore > 0 ||
+        item.directScore > 0
+    )
+    .sort((a, b) => {
+      if (a.directScore !== b.directScore) {
+        return b.directScore - a.directScore;
       }
 
-      // =================================================
-      // Exact G.O. number bonus
-      // =================================================
-
-      for (
-        const specialTerm
-        of specialTerms
-      ) {
-
-        if (
-          text.includes(
-            specialTerm
-          )
-        ) {
-
-          keywordScore += 20;
-
-        }
-
-        if (
-          fileName.includes(
-            specialTerm
-          )
-        ) {
-
-          keywordScore += 30;
-
-        }
-      }
-
-      return {
-
-        ...item,
-
-        keywordScore,
-
-        matchedTerms:
-          [
-            ...new Set(
-              matchedTerms
-            )
-          ]
-
-      };
-
+      return b.keywordScore - a.keywordScore;
     });
 
-  // ==================================================
-  // 11. Remove zero-score results
-  // ==================================================
-
-  const validResults =
-    scoredResults.filter(
-      item =>
-        item.keywordScore > 0
-    );
-
-  // ==================================================
-  // 12. Sort
-  // ==================================================
-
-  validResults.sort(
-    (a, b) =>
-      b.keywordScore -
-      a.keywordScore
-  );
-
-  // ==================================================
-  // 13. Final results
-  // ==================================================
-
-  const finalResults =
-    validResults.slice(
-      0,
-      limit
-    );
+  const finalResults = validResults.slice(0, limit);
 
   console.log(
     `🔤 Keyword results: ${finalResults.length}`
   );
 
-  finalResults.forEach(
-    (item, index) => {
-
-      console.log(
-        `🔤 Keyword ${index + 1}:`,
-        item.fileName,
-        '| chunk:',
-        item.chunkIndex,
-        '| score:',
-        item.keywordScore,
-        '| matched:',
-        item.matchedTerms.join(', ')
-      );
-
-    }
-  );
+  finalResults.forEach((item, index) => {
+    console.log(
+      `🔤 ${index + 1}. ${item.fileName}`,
+      `| chunk: ${item.chunkIndex}`,
+      `| direct: ${item.directScore}`,
+      `| keyword: ${item.keywordScore}`
+    );
+  });
 
   return finalResults;
 }
-
 
 /* =========================================================
    PAGE CATALOGUE TITLE SEARCH
@@ -3947,10 +3757,12 @@ async function searchRelevantChunks(
   return finalResults;
 
 }
-function extractLegalReferences(question) {
+/* =========================================================
+LEGAL REFERENCE SCORE
+========================================================= */
 
-  const text =
-    String(question || '');
+function extractLegalReferences(question) {
+  const text = String(question || '');
 
   const references = {
     goNumbers: [],
@@ -3959,117 +3771,129 @@ function extractLegalReferences(question) {
     dates: []
   };
 
-  // ==========================================
-  // G.O. numbers
-  // ==========================================
-
-  const goRegex =
-    /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:No\.?\s*)?\.?\s*(\d+)(?:\/(\d+))?/gi;
-
-  let match;
-
-  while (
-    (match = goRegex.exec(text)) !== null
-  ) {
-
-    const number =
-      match[1];
-
-    if (number) {
-
-      references.goNumbers.push(
-        number
-      );
-
-    }
-  }
-
-  // ==========================================
-  // Section numbers
-  // ==========================================
-
-  const sectionRegex =
-    /\b(?:section|sec\.?)\s*(\d+(?:-[a-z])?)/gi;
-
-  while (
-    (match =
-      sectionRegex.exec(text)) !== null
-  ) {
-
-    if (match[1]) {
-
-      references.sections.push(
-        match[1].toLowerCase()
-      );
-
-    }
-  }
-
-  // ==========================================
-  // Rule numbers
-  // ==========================================
-
-  const ruleRegex =
-    /\b(?:rule|rules)\s*(\d+(?:\([a-z0-9]+\))?)/gi;
-
-  while (
-    (match =
-      ruleRegex.exec(text)) !== null
-  ) {
-
-    if (match[1]) {
-
-      references.rules.push(
-        match[1].toLowerCase()
-      );
-
-    }
-  }
-
-  // ==========================================
-  // Dates
-  // ==========================================
-
-  const dateRegex =
-    /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g;
-
-  const dateMatches =
-    text.match(dateRegex);
-
-  if (dateMatches) {
-
-    references.dates =
-      dateMatches;
-  }
-
-  // Remove duplicates
-
-  references.goNumbers =
-    [...new Set(
-      references.goNumbers
-    )];
-
-  references.sections =
-    [...new Set(
-      references.sections
-    )];
-
-  references.rules =
-    [...new Set(
-      references.rules
-    )];
-
-  references.dates =
-    [...new Set(
-      references.dates
-    )];
-
-  console.log(
-    '⚖️ Legal references:',
-    references
+  const goMatches = text.match(
+    /\bG\.?\s*O\.?\s*(?:\(\s*(?:Ms|D|Ord)\s*\))?\s*(?:Ms\.?\s*)?(?:No\.?\s*)?\.?\s*\d+(?:\/\d+)?/gi
   );
 
-  return references;
+  if (goMatches) {
+    for (const match of goMatches) {
+      const number = match.match(/\d+(?:\/\d+)?/)?.[0];
+
+      if (number) {
+        references.goNumbers.push(number);
+      }
+    }
+  }
+
+  const sectionMatches = text.match(
+    /\b(?:section|sec\.?)\s*\d+(?:-[a-z])?(?:\([a-z0-9]+\))?/gi
+  );
+
+  if (sectionMatches) {
+    references.sections.push(...sectionMatches);
+  }
+
+  const ruleMatches = text.match(
+    /\b(?:rule|rules)\s*\d+(?:\([a-z0-9]+\))?/gi
+  );
+
+  if (ruleMatches) {
+    references.rules.push(...ruleMatches);
+  }
+
+  const dateMatches = text.match(
+    /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g
+  );
+
+  if (dateMatches) {
+    references.dates.push(...dateMatches);
+  }
+
+  return {
+    goNumbers: [...new Set(references.goNumbers)],
+    sections: [...new Set(references.sections)],
+    rules: [...new Set(references.rules)],
+    dates: [...new Set(references.dates)]
+  };
+}
+
+function calculateLegalReferenceScore(
+  item,
+  references
+) {
+  const fileName = normalizeDocumentText(item.fileName);
+  const text = normalizeDocumentText(item.text);
+
+  let score = 0;
+  const matched = [];
+
+  for (const number of references.goNumbers) {
+    const goPatterns = [
+      `g.o.${number}`,
+      `g.o. ${number}`,
+      `g.o.ms.no.${number}`,
+      `g.o. ms. no. ${number}`,
+      `g.o.(ms) no.${number}`,
+      `g.o. (ms) no. ${number}`,
+      `go${number}`,
+      `gomsno.${number}`,
+      `goms no.${number}`
+    ];
+
+    for (const pattern of goPatterns) {
+      if (fileName.includes(pattern)) {
+        score += 1000;
+        matched.push(pattern);
+      }
+
+      if (text.includes(pattern)) {
+        score += 800;
+        matched.push(pattern);
+      }
+    }
+
+    const numericPattern = new RegExp(
+      `\\b${escapeRegex(number)}\\b`,
+      'i'
+    );
+
+    if (numericPattern.test(text)) {
+      score += 50;
+      matched.push(number);
+    }
+  }
+
+  for (const section of references.sections) {
+    const normalizedSection =
+      normalizeDocumentText(section);
+
+    if (text.includes(normalizedSection)) {
+      score += 500;
+      matched.push(section);
+    }
+  }
+
+  for (const rule of references.rules) {
+    const normalizedRule =
+      normalizeDocumentText(rule);
+
+    if (text.includes(normalizedRule)) {
+      score += 400;
+      matched.push(rule);
+    }
+  }
+
+  for (const date of references.dates) {
+    if (text.includes(normalizeDocumentText(date))) {
+      score += 300;
+      matched.push(date);
+    }
+  }
+
+  return {
+    score,
+    matched: [...new Set(matched)]
+  };
 }
 function calculateLegalReferenceScore(
   item,
@@ -4289,289 +4113,174 @@ function calculateLegalReferenceScore(
    KEYWORD + VECTOR
 ========================================================= */
 
+/* =========================================================
+HYBRID SEARCH
+KEYWORD + VECTOR
+========================================================= */
+
 async function searchHybridChunks(
   question,
-  limit = 5,
+  limit = 8,
   fileIds = []
 ) {
-
-  console.log(
-    '🔀 Starting Hybrid Search...' +
-    (fileIds && fileIds.length
-      ? ` (scoped to ${fileIds.length} file(s))`
-      : '')
-  );
-
-  // ==========================================
-  // Extract legal references
-  // ==========================================
+  console.log('🔀 Starting hybrid search');
 
   const legalReferences =
-    extractLegalReferences(
-      question
+    extractLegalReferences(question);
+
+  const keywordResults =
+    await searchKeywordChunks(
+      question,
+      50,
+      fileIds
     );
 
-  // ==========================================
-  // Run keyword + vector search
-  // ==========================================
+  let vectorResults = [];
 
-  const [
-    keywordResults,
-    vectorResults
-  ] = await Promise.all([
+  try {
+    vectorResults =
+      await searchRelevantChunks(
+        question,
+        50,
+        fileIds
+      );
+  } catch (error) {
+    console.error(
+      '⚠️ Vector search failed. Continuing with keyword search:',
+      error.message
+    );
+  }
 
-    searchKeywordChunks(
-      question,
-      15,
-      fileIds
-    ),
+  const merged = new Map();
 
-    searchRelevantChunks(
-      question,
-      15,
-      fileIds
-    )
+  const addResult = (item) => {
+    const key =
+      `${item.driveFileId}:${item.chunkIndex}`;
 
-  ]);
-
-  console.log(
-    `🔤 Keyword results: ${keywordResults.length}`
-  );
-
-  console.log(
-    `🧠 Vector results: ${vectorResults.length}`
-  );
-
-  // ==========================================
-  // Merge
-  // ==========================================
-
-  const merged =
-    new Map();
-
-  keywordResults.forEach(
-    item => {
-
-      const key =
-        `${item.driveFileId}_${item.chunkIndex}`;
-
-      const legal =
-        calculateLegalReferenceScore(
-          item,
-          legalReferences
-        );
-
-      merged.set(
-        key,
-        {
-
-          ...item,
-
-          keywordScore:
-            Number(
-              item.keywordScore || 0
-            ),
-
-          vectorScore:
-            0,
-
-          legalScore:
-            legal.score,
-
-          matchedLegalReferences:
-            legal.matched,
-
-          hybridScore:
-            (
-              Number(
-                item.keywordScore || 0
-              ) * 0.20
-            ) +
-            (
-              legal.score * 0.70
-            )
-
-        }
+    const legal =
+      calculateLegalReferenceScore(
+        item,
+        legalReferences
       );
 
+    const direct =
+      calculateDirectDocumentScore(
+        item,
+        question
+      );
+
+    const keywordScore =
+      Number(item.keywordScore || 0);
+
+    const vectorScore =
+      Number(item.score || item.vectorScore || 0);
+
+    const normalizedVectorScore =
+      Math.max(
+        0,
+        Math.min(1, vectorScore)
+      );
+
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, {
+        ...item,
+        keywordScore,
+        vectorScore: normalizedVectorScore,
+        legalScore: legal.score,
+        directScore: Math.max(
+          direct.score,
+          Number(item.directScore || 0)
+        ),
+        matchedLegalReferences: legal.matched,
+        matchedDirectTerms: direct.matchedTerms
+      });
+
+      return;
     }
-  );
 
-  // ==========================================
-  // Add vector results
-  // ==========================================
-
-  vectorResults.forEach(
-    item => {
-
-      const key =
-        `${item.driveFileId}_${item.chunkIndex}`;
-
-      const vectorScore =
-        Number(
-          item.score || 0
-        );
-
-      const normalizedVectorScore =
-        Math.max(
-          0,
-          Math.min(
-            1,
-            vectorScore
-          )
-        );
-
-      if (
-        merged.has(key)
-      ) {
-
-        const existing =
-          merged.get(key);
-
-        existing.vectorScore =
-          normalizedVectorScore;
-
-        existing.hybridScore =
-          (
-            (existing.keywordScore || 0)
-            * 0.20
-          ) +
-
-          (
-            (existing.legalScore || 0)
-            * 0.70
-          ) +
-
-          (
-            normalizedVectorScore
-            * 0.10
-          );
-
-        merged.set(
-          key,
-          existing
-        );
-
-      }
-      else {
-
-        const legal =
-          calculateLegalReferenceScore(
-            item,
-            legalReferences
-          );
-
-        merged.set(
-          key,
-          {
-
-            ...item,
-
-            keywordScore:
-              0,
-
-            vectorScore:
-              normalizedVectorScore,
-
-            legalScore:
-              legal.score,
-
-            matchedLegalReferences:
-              legal.matched,
-
-            hybridScore:
-              (
-                legal.score * 0.70
-              ) +
-              (
-                normalizedVectorScore
-                * 0.10
-              )
-
-          }
-        );
-
-      }
-
-    }
-  );
-
-  // ==========================================
-  // Rank
-  // ==========================================
-
-  const rankedResults =
-    Array.from(
-      merged.values()
-    ).sort(
-      (a, b) => {
-
-        // Exact legal reference gets
-        // absolute priority.
-
-        if (
-          a.legalScore !==
-          b.legalScore
-        ) {
-
-          return (
-            b.legalScore -
-            a.legalScore
-          );
-
-        }
-
-        return (
-          b.hybridScore -
-          a.hybridScore
-        );
-
-      }
+    existing.keywordScore = Math.max(
+      existing.keywordScore || 0,
+      keywordScore
     );
+
+    existing.vectorScore = Math.max(
+      existing.vectorScore || 0,
+      normalizedVectorScore
+    );
+
+    existing.legalScore = Math.max(
+      existing.legalScore || 0,
+      legal.score
+    );
+
+    existing.directScore = Math.max(
+      existing.directScore || 0,
+      direct.score,
+      Number(item.directScore || 0)
+    );
+
+    existing.matchedLegalReferences = [
+      ...new Set([
+        ...(existing.matchedLegalReferences || []),
+        ...legal.matched
+      ])
+    ];
+
+    existing.matchedDirectTerms = [
+      ...new Set([
+        ...(existing.matchedDirectTerms || []),
+        ...direct.matchedTerms
+      ])
+    ];
+
+    merged.set(key, existing);
+  };
+
+  keywordResults.forEach(addResult);
+  vectorResults.forEach(addResult);
+
+  const rankedResults = Array.from(
+    merged.values()
+  )
+    .map((item) => ({
+      ...item,
+      hybridScore:
+        Number(item.directScore || 0) +
+        Number(item.legalScore || 0) * 10 +
+        Number(item.keywordScore || 0) * 0.2 +
+        Number(item.vectorScore || 0) * 0.1
+    }))
+    .sort((a, b) => {
+      if (a.directScore !== b.directScore) {
+        return b.directScore - a.directScore;
+      }
+
+      if (a.legalScore !== b.legalScore) {
+        return b.legalScore - a.legalScore;
+      }
+
+      return b.hybridScore - a.hybridScore;
+    });
 
   const finalResults =
-    rankedResults.slice(
-      0,
-      limit
-    );
+    rankedResults.slice(0, limit);
 
   console.log(
     `🔀 Hybrid results: ${finalResults.length}`
   );
 
-  finalResults.forEach(
-    (item, index) => {
-
-      console.log(
-
-        `🔀 Hybrid ${index + 1}:`,
-
-        item.fileName,
-
-        '| chunk:',
-        item.chunkIndex,
-
-        '| keyword:',
-        item.keywordScore,
-
-        '| legal:',
-        item.legalScore,
-
-        '| vector:',
-        item.vectorScore,
-
-        '| hybrid:',
-        item.hybridScore,
-
-        '| matched:',
-        (
-          item.matchedLegalReferences || []
-        ).join(', ')
-
-      );
-
-    }
-  );
+  finalResults.forEach((item, index) => {
+    console.log(
+      `🔀 ${index + 1}. ${item.fileName}`,
+      `| chunk: ${item.chunkIndex}`,
+      `| direct: ${item.directScore}`,
+      `| legal: ${item.legalScore}`,
+      `| keyword: ${item.keywordScore}`,
+      `| vector: ${item.vectorScore}`
+    );
+  });
 
   return finalResults;
 }
