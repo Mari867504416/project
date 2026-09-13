@@ -3488,6 +3488,72 @@ async function searchKeywordChunks(question, limit = 10) {
 
   return finalResults;
 }
+
+
+
+
+async function debugExactKeywordSearch(searchTerm) {
+
+  const term =
+    String(searchTerm || '')
+      .trim();
+
+  if (!term) {
+    return [];
+  }
+
+  console.log(
+    `🧪 DEBUG exact search: ${term}`
+  );
+
+  const results =
+    await DriveChunk.find({
+      $or: [
+        {
+          text: {
+            $regex: term,
+            $options: 'i'
+          }
+        },
+        {
+          fileName: {
+            $regex: term,
+            $options: 'i'
+          }
+        }
+      ]
+    })
+    .select({
+      _id: 0,
+      driveFileId: 1,
+      fileName: 1,
+      driveUrl: 1,
+      chunkIndex: 1,
+      text: 1
+    })
+    .limit(50)
+    .lean();
+
+  console.log(
+    `🧪 DEBUG matches for "${term}":`,
+    results.length
+  );
+
+  results.forEach(
+    (item, index) => {
+
+      console.log(
+        `🧪 ${index + 1}:`,
+        item.fileName,
+        '| chunk:',
+        item.chunkIndex
+      );
+
+    }
+  );
+
+  return results;
+}
 /* =========================================================
    VECTOR SEARCH
 ========================================================= */
@@ -5474,7 +5540,7 @@ app.post(
        * STEP 1
        * VECTOR SEARCH
        */
-
+await debugExactKeywordSearch('175');
     const relevantChunks =
   await searchHybridChunks(
     cleanQuestion,
