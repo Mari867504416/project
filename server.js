@@ -3080,6 +3080,113 @@ async function searchKeywordChunks(question, limit = 10) {
   return results;
 
 }
+
+/* =========================================================
+   VECTOR SEARCH
+========================================================= */
+
+async function searchRelevantChunks(
+  question,
+  limit = 5
+) {
+
+  console.log(
+    '📊 Total DriveChunks:',
+    await DriveChunk.countDocuments()
+  );
+
+  console.log(
+    '📊 Valid embeddings:',
+    await DriveChunk.countDocuments({
+      embedding: { $size: 768 }
+    })
+  );
+
+
+  /*
+   * Create query embedding
+   */
+
+  const queryEmbedding =
+    await createQueryEmbedding(
+      question
+    );
+
+
+  console.log(
+    '🔎 Query embedding dimension:',
+    queryEmbedding.length
+  );
+
+
+  /*
+   * MongoDB Atlas Vector Search
+   */
+
+  const results =
+    await DriveChunk.aggregate([
+
+      {
+        $vectorSearch: {
+
+          index:
+            'revenue_vector_index',
+
+          path:
+            'embedding',
+
+          queryVector:
+            queryEmbedding,
+
+          numCandidates:
+            Math.max(
+              100,
+              limit * 20
+            ),
+
+          limit:
+            limit
+
+        }
+
+      },
+
+
+      {
+        $project: {
+
+          _id: 0,
+
+          driveFileId: 1,
+
+          fileName: 1,
+
+          driveUrl: 1,
+
+          chunkIndex: 1,
+
+          text: 1,
+
+          score: {
+            $meta:
+              'vectorSearchScore'
+          }
+
+        }
+
+      }
+
+    ]);
+
+
+  console.log(
+    `📚 Retrieved ${results.length} relevant chunks`
+  );
+
+
+  return results;
+
+}
 /* =========================================================
    HEALTH CHECK
 ========================================================= */
