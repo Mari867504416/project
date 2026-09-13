@@ -3453,59 +3453,58 @@ async function searchKeywordChunks(question, limit = 10, fileIds = []) {
   // 6. Tamil question words to ignore
   // ==================================================
 
-  const stopWords = new Set([
+ const stopWords = new Set([
 
-    // Tamil question words
-    'எதை',
-    'எது',
-    'என்ன',
-    'எப்படி',
-    'எங்கே',
-    'எப்போது',
-    'எதற்கு',
-    'எதனால்',
-    'எதற்காக',
-    'யார்',
-    'யாருடைய',
-    'யாருக்கு',
-    'யாரால்',
-    'எந்த',
-    'எவ்வாறு',
-    'எவ்வளவு',
-    'எத்தனை',
-    'குறித்து',
-    'பற்றி',
-    'கூறுகிறது',
-    'கூறுக',
-    'விளக்கவும்',
-    'விளக்கம்',
-    'சொல்லவும்',
-    'தெரிவிக்கவும்',
-    'உள்ளது',
-    'உள்ளன',
-    'ஆகும்',
-    'என்பது',
+  'எதை',
+  'எது',
+  'என்ன',
+  'எப்படி',
+  'எங்கே',
+  'எப்போது',
+  'எதற்கு',
+  'எதனால்',
+  'எதற்காக',
+  'யார்',
+  'யாருடைய',
+  'யாருக்கு',
+  'யாரால்',
+  'எந்த',
+  'எவ்வாறு',
+  'எவ்வளவு',
+  'எத்தனை',
+  'குறித்து',
+  'பற்றி',
+  'கூறுகிறது',
+  'கூறுக',
+  'விளக்குக',
+  'விளக்கவும்',
+  'விளக்கம்',
+  'சொல்லவும்',
+  'தெரிவிக்கவும்',
+  'உள்ளது',
+  'உள்ளன',
+  'ஆகும்',
+  'என்பது',
 
-    // English question words
-    'what',
-    'which',
-    'when',
-    'where',
-    'why',
-    'who',
-    'how',
-    'about',
-    'tell',
-    'explain',
-    'please',
-    'give',
-    'details',
-    'detail',
-    'does',
-    'mean',
-    'means'
-  ]);
+  'what',
+  'which',
+  'when',
+  'where',
+  'why',
+  'who',
+  'how',
+  'about',
+  'tell',
+  'explain',
+  'please',
+  'give',
+  'details',
+  'detail',
+  'does',
+  'mean',
+  'means'
 
+]);
   const normalTerms =
     rawTerms
       .map(term =>
@@ -3624,165 +3623,220 @@ async function searchKeywordChunks(question, limit = 10, fileIds = []) {
   // 10. Score results
   // ==================================================
 
-  const scoredResults =
-    results.map(item => {
+  // ==================================================
+// 10. Score results
+// ==================================================
 
-      const fileName =
-        String(
-          item.fileName || ''
-        ).toLowerCase();
+const scoredResults =
+  results.map(item => {
 
-      const text =
-        String(
-          item.text || ''
-        ).toLowerCase();
+    const fileName =
+      String(
+        item.fileName || ''
+      ).toLowerCase();
 
-      let keywordScore = 0;
+    const text =
+      String(
+        item.text || ''
+      ).toLowerCase();
 
-      const matchedTerms = [];
+    const lowerQuestion =
+      cleanQuestion.toLowerCase();
 
-      for (const term of uniqueTerms) {
+    let keywordScore = 0;
 
-        const termLower =
-          term.toLowerCase();
+    const matchedTerms = [];
 
-        const inFileName =
-          fileName.includes(
-            termLower
-          );
+    // ==============================================
+    // Count normal keyword matches
+    // ==============================================
 
-        const inText =
-          text.includes(
-            termLower
-          );
+    let normalMatchedCount = 0;
 
-        // ============================================
-        // Special legal references
-        // ============================================
+    const matchedNormalTerms = [];
 
-        const isSpecial =
-          specialTerms.includes(
-            term
-          );
+    for (const term of uniqueTerms) {
 
-        if (isSpecial) {
+      const termLower =
+        term.toLowerCase();
 
-          if (inFileName) {
+      const inFileName =
+        fileName.includes(termLower);
 
-            keywordScore += 15;
+      const inText =
+        text.includes(termLower);
 
-            matchedTerms.push(
-              term
-            );
+      // ==========================================
+      // Special legal references
+      // ==========================================
 
-          }
+      const isSpecial =
+        specialTerms.includes(term);
 
-          if (inText) {
+      if (isSpecial) {
 
-            keywordScore += 10;
+        if (inFileName) {
 
-            if (
-              !matchedTerms.includes(term)
-            ) {
-              matchedTerms.push(term);
-            }
+          keywordScore += 15;
 
-          }
+          matchedTerms.push(term);
 
         }
 
-        // ============================================
-        // Normal keywords
-        // ============================================
+        else if (inText) {
 
-        else {
+          keywordScore += 10;
 
-          if (inFileName) {
-
-            keywordScore += 5;
-
-            matchedTerms.push(
-              term
-            );
-
-          }
-          else if (inText) {
-
-            keywordScore += 1;
-
-            matchedTerms.push(
-              term
-            );
-
-          }
+          matchedTerms.push(term);
 
         }
+
+        continue;
       }
 
-      // =================================================
-      // Exact question phrase bonus
-      // =================================================
+      // ==========================================
+      // Normal keywords
+      // ==========================================
 
-      const lowerQuestion =
-        cleanQuestion.toLowerCase();
+      if (inFileName) {
+
+        // Filename match is strong
+        keywordScore += 4;
+
+        normalMatchedCount++;
+
+        matchedNormalTerms.push(term);
+
+        matchedTerms.push(term);
+
+      }
+
+      else if (inText) {
+
+        keywordScore += 1;
+
+        normalMatchedCount++;
+
+        matchedNormalTerms.push(term);
+
+        matchedTerms.push(term);
+
+      }
+
+    }
+
+    // ==============================================
+    // IMPORTANT:
+    // Multiple important keywords in same document
+    // ==============================================
+
+    if (
+      normalMatchedCount >= 2
+    ) {
+
+      keywordScore +=
+        normalMatchedCount * 3;
+
+    }
+
+    // ==============================================
+    // Exact phrase bonus
+    // ==============================================
+
+    // Only use meaningful normal terms
+    // instead of the complete Tamil question.
+
+    const meaningfulTerms =
+      normalTerms.filter(
+        term =>
+          term.length >= 3
+      );
+
+    if (
+      meaningfulTerms.length >= 2
+    ) {
+
+      const phrase =
+        meaningfulTerms.join(' ');
+
+      if (
+        fileName.includes(phrase)
+      ) {
+
+        keywordScore += 12;
+
+      }
+
+      if (
+        text.includes(phrase)
+      ) {
+
+        keywordScore += 8;
+
+      }
+
+    }
+
+    // ==============================================
+    // Exact question phrase bonus
+    // ==============================================
+
+    if (
+      lowerQuestion.length >= 8 &&
+      text.includes(lowerQuestion)
+    ) {
+
+      keywordScore += 10;
+
+    }
+
+    // ==============================================
+    // Exact G.O. number bonus
+    // ==============================================
+
+    for (
+      const specialTerm
+      of specialTerms
+    ) {
 
       if (
         text.includes(
-          lowerQuestion
+          specialTerm
         )
       ) {
 
-        keywordScore += 10;
+        keywordScore += 20;
 
       }
 
-      // =================================================
-      // Exact G.O. number bonus
-      // =================================================
-
-      for (
-        const specialTerm
-        of specialTerms
+      if (
+        fileName.includes(
+          specialTerm
+        )
       ) {
 
-        if (
-          text.includes(
-            specialTerm
-          )
-        ) {
+        keywordScore += 30;
 
-          keywordScore += 20;
-
-        }
-
-        if (
-          fileName.includes(
-            specialTerm
-          )
-        ) {
-
-          keywordScore += 30;
-
-        }
       }
 
-      return {
+    }
 
-        ...item,
+    return {
 
-        keywordScore,
+      ...item,
 
-        matchedTerms:
-          [
-            ...new Set(
-              matchedTerms
-            )
-          ]
+      keywordScore,
 
-      };
+      matchedTerms:
+        [
+          ...new Set(
+            matchedTerms
+          )
+        ]
 
-    });
+    };
 
+  });
   // ==================================================
   // 11. Remove zero-score results
   // ==================================================
