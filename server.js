@@ -192,7 +192,81 @@ mongoose.connect(
 
 });
 
+// ======================================================
+// PAGES CATALOGUE
+// ======================================================
 
+const cataloguePath = path.join(
+  __dirname,
+  'data',
+  'pages-catalogue.json'
+);
+
+let catalogue = [];
+
+try {
+
+  catalogue = JSON.parse(
+    fs.readFileSync(cataloguePath, 'utf8')
+  );
+
+  console.log(
+    `📚 Catalogue loaded: ${catalogue.length} documents`
+  );
+
+} catch (error) {
+
+  console.error(
+    '❌ Failed to load pages-catalogue.json:',
+    error.message
+  );
+
+}
+
+function searchCatalogue(query) {
+
+  const q = String(query || '')
+    .toLowerCase()
+    .trim();
+
+  if (!q) {
+    return [];
+  }
+
+  const keywords = q
+    .split(/\s+/)
+    .filter(word => word.length >= 2);
+
+  return catalogue
+    .map(item => {
+
+      const searchableText = `
+        ${item.category || ''}
+        ${item.groupLabel || ''}
+        ${item.text || ''}
+      `.toLowerCase();
+
+      let score = 0;
+
+      for (const keyword of keywords) {
+
+        if (searchableText.includes(keyword)) {
+          score++;
+        }
+
+      }
+
+      return {
+        ...item,
+        score
+      };
+
+    })
+
+    .filter(item => item.score > 0)
+
+    .sort((a, b) => b.score - a.score);
+}
 /* =========================================================
    GEMINI VECTOR CHUNK MODEL
 ========================================================= */
