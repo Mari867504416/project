@@ -6425,7 +6425,7 @@ app.post(
       const relevantChunks =
         await searchHybridChunks(
           cleanQuestion,
-          12,
+          5,
           requestedFileIds
         );
 
@@ -6509,28 +6509,21 @@ app.post(
        * DEBUG RETRIEVED DOCUMENTS
        */
 
-     relevantChunks.forEach((item, index) => {
+      relevantChunks.forEach(
+        (item, index) => {
 
- /*
- * DEBUG RETRIEVED DOCUMENTS
- */
+          console.log(
+            `📄 Retrieved ${index + 1}:`,
+            item.fileName,
+            `| chunk:`,
+            item.chunkIndex,
+            `| hybridScore:`,
+            item.hybridScore
+          );
 
-relevantChunks.forEach((item, index) => {
+        }
+      );
 
-  console.log(
-    `📄 Retrieved ${index + 1}:`,
-    {
-      fileName: item.fileName,
-      driveFileId: item.driveFileId,
-      chunkIndex: item.chunkIndex,
-      hybridScore: item.hybridScore,
-      score: item.score,
-      textPreview:
-        String(item.text || '').slice(0, 250)
-    }
-  );
-
-});
 
       /*
        * STEP 2
