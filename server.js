@@ -2982,12 +2982,11 @@ async function searchKeywordChunks(question, limit = 10) {
     `🔤 Keyword search: ${cleanQuestion}`
   );
 
+  // --------------------------------------------------
+  // 1. Extract useful search terms
+  // --------------------------------------------------
 
-  /*
-   * Split question into useful search terms
-   */
-
-  const terms =
+  const rawTerms =
     cleanQuestion
       .split(/\s+/)
       .map(term =>
@@ -2997,53 +2996,57 @@ async function searchKeywordChunks(question, limit = 10) {
       )
       .filter(term => term.length >= 2);
 
+  const uniqueTerms =
+    [...new Set(
+      rawTerms.map(term =>
+        term.toLowerCase()
+      )
+    )];
 
-  if (!terms.length) {
+  if (!uniqueTerms.length) {
     return [];
   }
 
+  console.log(
+    '🔤 Search terms:',
+    uniqueTerms
+  );
 
-  /*
-   * Escape regex characters
-   */
+  // --------------------------------------------------
+  // 2. Escape regex characters
+  // --------------------------------------------------
 
-  const escapedTerms =
-    terms.map(term =>
+  const regexTerms =
+    uniqueTerms.map(term =>
       term.replace(
         /[.*+?^${}()|[\]\\]/g,
         '\\$&'
       )
     );
 
+  const regex =
+    regexTerms.join('|');
 
-  /*
-   * Search ALL important terms.
-   *
-   * $and means every term should be present.
-   */
+  // --------------------------------------------------
+  // 3. Search filename + text
+  // --------------------------------------------------
 
-  const conditions =
-    escapedTerms.map(term => ({
+  const results =
+    await DriveChunk.find({
       $or: [
         {
           text: {
-            $regex: term,
+            $regex: regex,
             $options: 'i'
           }
         },
         {
           fileName: {
-            $regex: term,
+            $regex: regex,
             $options: 'i'
           }
         }
       ]
-    }));
-
-
-  const results =
-    await DriveChunk.find({
-      $and: conditions
     })
     .select({
       _id: 0,
@@ -3053,31 +3056,143 @@ async function searchKeywordChunks(question, limit = 10) {
       chunkIndex: 1,
       text: 1
     })
-    .limit(limit)
+    .limit(200)
     .lean();
 
-
   console.log(
-    `🔤 Keyword results: ${results.length}`
+    `🔤 Keyword raw matches: ${results.length}`
   );
 
+  // --------------------------------------------------
+  // 4. Score each result
+  // --------------------------------------------------
 
-  results.forEach(
+  const scoredResults =
+    results.map(item => {
+
+      const fileName =
+        String(
+          item.fileName || ''
+        ).toLowerCase();
+
+      const text =
+        String(
+          item.text || ''
+        ).toLowerCase();
+
+      let keywordScore = 0;
+
+      let matchedTerms = [];
+
+      for (const term of uniqueTerms) {
+
+        const inFileName =
+          fileName.includes(term);
+
+        const inText =
+          text.includes(term);
+
+        if (inFileName) {
+
+          // Filename match is highly important
+          keywordScore += 5;
+
+          matchedTerms.push(term);
+
+        } else if (inText) {
+
+          keywordScore += 1;
+
+          matchedTerms.push(term);
+        }
+      }
+
+      // ------------------------------------------------
+      // Exact phrase bonus
+      // ------------------------------------------------
+
+      const lowerQuestion =
+        cleanQuestion.toLowerCase();
+
+      if (
+        text.includes(lowerQuestion)
+      ) {
+
+        keywordScore += 10;
+
+      }
+
+      if (
+        fileName.includes(lowerQuestion)
+      ) {
+
+        keywordScore += 15;
+
+      }
+
+      return {
+        ...item,
+
+        keywordScore,
+
+        matchedTerms:
+          [...new Set(matchedTerms)]
+      };
+
+    });
+
+  // --------------------------------------------------
+  // 5. Remove zero-score results
+  // --------------------------------------------------
+
+  const validResults =
+    scoredResults.filter(
+      item =>
+        item.keywordScore > 0
+    );
+
+  // --------------------------------------------------
+  // 6. Sort highest score first
+  // --------------------------------------------------
+
+  validResults.sort(
+    (a, b) =>
+      b.keywordScore -
+      a.keywordScore
+  );
+
+  // --------------------------------------------------
+  // 7. Return top results
+  // --------------------------------------------------
+
+  const finalResults =
+    validResults.slice(
+      0,
+      limit
+    );
+
+  console.log(
+    `🔤 Keyword results: ${finalResults.length}`
+  );
+
+  finalResults.forEach(
     (item, index) => {
 
       console.log(
         `🔤 Keyword ${index + 1}:`,
         item.fileName,
         '| chunk:',
-        item.chunkIndex
+        item.chunkIndex,
+        '| score:',
+        item.keywordScore,
+        '| matched:',
+        item.matchedTerms.join(', ')
       );
 
     }
   );
 
-
-  return results;
-
+  return finalResults;
 }
 
 /* =========================================================
