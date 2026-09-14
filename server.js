@@ -4019,7 +4019,370 @@ app.post(
 /*
  * GET SYNC STATUS
  */
+// =====================================================
+// OCR REQUIRED FILES - LIST
+// =====================================================
 
+app.get(
+  '/admin/drive-sync/ocr-required',
+  async (req, res) => {
+
+    try {
+
+      const files =
+        await DriveSyncFile.find({
+          status: 'ocr_required'
+        })
+        .sort({ updatedAt: -1 })
+        .lean();
+
+      res.json({
+        success: true,
+        count: files.length,
+        files
+      });
+
+    } catch (error) {
+
+      console.error(
+        'OCR required list error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+
+    }
+
+  }
+);
+// =====================================================
+// MANUAL TEXT ENTRY
+// TEXT → CHUNKS → GEMINI EMBEDDINGS → MONGODB
+// =====================================================
+
+app.post(
+  '/admin/drive-sync/manual-text',
+  async (req, res) => {
+
+    try {
+
+      const {
+        driveFileId,
+        text
+      } = req.body;
+
+      // -----------------------------------------------
+      // VALIDATION
+      // -----------------------------------------------
+
+      if (!driveFileId) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'driveFileId is required.'
+        });
+
+      }
+
+      if (!text || !text.trim()) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'Manual text is required.'
+        });
+
+      }
+
+      const cleanText =
+        text
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .trim();
+
+      console.log('');
+      console.log(
+        '=========================================='
+      );
+      console.log(
+        '📝 MANUAL TEXT INDEXING'
+      );
+      console.log(
+        '=========================================='
+      );
+
+      console.log(
+        `🆔 Drive File ID: ${driveFileId}`
+      );
+
+      console.log(
+        `📝 Text length: ${cleanText.length}`
+      );
+
+
+      // -----------------------------------------------
+      // FIND DRIVE FILE
+      // -----------------------------------------------
+
+      const syncFile =
+        await DriveSyncFile.findOne({
+          driveFileId
+        });
+
+      if (!syncFile) {
+
+        return res.status(404).json({
+          success: false,
+          error: 'Drive sync file not found.'
+        });
+
+      }
+
+
+      // -----------------------------------------------
+      // CREATE CHUNKS
+      // -----------------------------------------------
+
+      const chunkSize = 5000;
+      const overlap = 500;
+
+      const chunks = [];
+
+      let start = 0;
+
+      while (start < cleanText.length) {
+
+        const end =
+          Math.min(
+            start + chunkSize,
+            cleanText.length
+          );
+
+        const chunk =
+          cleanText
+            .slice(start, end)
+            .trim();
+
+        if (chunk) {
+          chunks.push(chunk);
+        }
+
+        if (end >= cleanText.length) {
+          break;
+        }
+
+        start =
+          end - overlap;
+      }
+
+      console.log(
+        `📚 ${chunks.length} chunks created`
+      );
+
+
+      if (!chunks.length) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'No usable text chunks created.'
+        });
+
+      }
+
+
+      // -----------------------------------------------
+      // CREATE ALL EMBEDDINGS FIRST
+      // -----------------------------------------------
+
+      const newChunks = [];
+
+      for (
+        let i = 0;
+        i < chunks.length;
+        i++
+      ) {
+
+        console.log(
+          `🔢 Embedding chunk ${i + 1}/${chunks.length}`
+        );
+
+        const embedding =
+          await createDocumentEmbedding(
+            chunks[i]
+          );
+
+        if (
+          !Array.isArray(embedding) ||
+          embedding.length !== 768
+        ) {
+
+          throw new Error(
+            `Invalid embedding for chunk ${i + 1}: expected 768, got ${embedding?.length || 0}`
+          );
+
+        }
+
+        console.log(
+          `✅ Embedding ${i + 1}: ${embedding.length} dimensions`
+        );
+
+        newChunks.push({
+          driveFileId: syncFile.driveFileId,
+
+          fileName: syncFile.fileName,
+
+          chunkIndex: i,
+
+          text: chunks[i],
+
+          embedding: embedding,
+
+          modifiedTime:
+            syncFile.modifiedTime,
+
+          md5Checksum:
+            syncFile.md5Checksum,
+
+          source:
+            'manual'
+        });
+
+      }
+
+
+      // -----------------------------------------------
+      // DELETE OLD CHUNKS ONLY AFTER
+      // ALL EMBEDDINGS ARE SUCCESSFUL
+      // -----------------------------------------------
+
+      await DriveChunk.deleteMany({
+        driveFileId
+      });
+
+      console.log(
+        '🗑️ Old chunks removed'
+      );
+
+
+      // -----------------------------------------------
+      // INSERT NEW CHUNKS
+      // -----------------------------------------------
+
+      await DriveChunk.insertMany(
+        newChunks
+      );
+
+      console.log(
+        `💾 ${newChunks.length} chunks inserted`
+      );
+
+
+      // -----------------------------------------------
+      // UPDATE SYNC STATUS
+      // -----------------------------------------------
+
+      await DriveSyncFile.updateOne(
+        {
+          driveFileId
+        },
+        {
+          $set: {
+            status: 'completed',
+
+            error: '',
+
+            completedAt:
+              new Date(),
+
+            lastAttemptAt:
+              new Date()
+          }
+        }
+      );
+
+
+      console.log(
+        `✅ Manual text indexing completed: ${syncFile.fileName}`
+      );
+
+
+      res.json({
+
+        success: true,
+
+        message:
+          'Manual text indexed successfully.',
+
+        fileName:
+          syncFile.fileName,
+
+        chunks:
+          newChunks.length,
+
+        dimensions: 768,
+
+        status:
+          'completed'
+
+      });
+
+
+    } catch (error) {
+
+      console.error('');
+      console.error(
+        '❌ Manual text indexing failed'
+      );
+      console.error(
+        error.message
+      );
+
+
+      // -----------------------------------------------
+      // KEEP FILE AS OCR REQUIRED
+      // -----------------------------------------------
+
+      if (req.body?.driveFileId) {
+
+        await DriveSyncFile.updateOne(
+          {
+            driveFileId:
+              req.body.driveFileId
+          },
+          {
+            $set: {
+              status:
+                'ocr_required',
+
+              error:
+                String(
+                  error.message || error
+                ).substring(
+                  0,
+                  2000
+                )
+            }
+          }
+        );
+
+      }
+
+
+      res.status(500).json({
+
+        success: false,
+
+        error:
+          error.message
+
+      });
+
+    }
+
+  }
+);
 app.get(
   '/admin/drive-sync/status',
   async (req, res) => {
