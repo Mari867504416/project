@@ -2629,87 +2629,298 @@ async function runDriveBatch(
     driveSyncRunning = false;
   }
 }
+/* =========================================================
+   REGISTER ALL GOOGLE DRIVE PDF FILES
+   Google Drive → drivesyncfiles
+========================================================= */
+
 async function registerAllDrivePdfFiles() {
- const drive = createDriveClient();
+
+  /*
+   * ==========================================
+   * GOOGLE DRIVE AUTHENTICATION
+   * ==========================================
+   */
+
+  const auth =
+    new google.auth.JWT({
+
+      email:
+        process.env
+          .GOOGLE_SERVICE_ACCOUNT_EMAIL,
+
+      key:
+        process.env
+          .GOOGLE_PRIVATE_KEY
+          .replace(/\\n/g, '\n'),
+
+      scopes: [
+
+        'https://www.googleapis.com/auth/drive.readonly'
+
+      ]
+
+    });
+
+
+  /*
+   * ==========================================
+   * GOOGLE DRIVE CLIENT
+   * ==========================================
+   */
+
+  const drive =
+    google.drive({
+
+      version:
+        'v3',
+
+      auth
+
+    });
+
+
+  /*
+   * ==========================================
+   * START SCAN
+   * ==========================================
+   */
+
   console.log('');
-  console.log('==========================================');
-  console.log('📂 SCANNING GOOGLE DRIVE FOR ALL PDF FILES');
-  console.log('==========================================');
+
+  console.log(
+    '=========================================='
+  );
+
+  console.log(
+    '📂 SCANNING GOOGLE DRIVE FOR ALL PDF FILES'
+  );
+
+  console.log(
+    '=========================================='
+  );
+
+
+  /*
+   * Check folder ID
+   */
+
+  const folderId =
+    process.env
+      .GOOGLE_DRIVE_FOLDER_ID;
+
+
+  if (!folderId) {
+
+    throw new Error(
+      'GOOGLE_DRIVE_FOLDER_ID is not configured.'
+    );
+
+  }
+
+
+  console.log(
+    `📁 Folder ID: ${folderId}`
+  );
+
+
+  /*
+   * ==========================================
+   * COUNTERS
+   * ==========================================
+   */
 
   let pageToken = null;
 
   let totalDriveFiles = 0;
+
   let newFiles = 0;
+
   let existingFiles = 0;
+
+  let modifiedFiles = 0;
+
+
+  /*
+   * ==========================================
+   * READ ALL PAGES FROM GOOGLE DRIVE
+   * ==========================================
+   */
 
   do {
 
-    const response = await drive.files.list({
+    console.log('');
 
-      q: `'${process.env.GOOGLE_DRIVE_FOLDER_ID}' in parents
-          and mimeType = 'application/pdf'
-          and trashed = false`,
+    console.log(
+      '🔎 Reading Google Drive page...'
+    );
 
-      fields: `
-        nextPageToken,
-        files(
-          id,
-          name,
-          modifiedTime,
-          md5Checksum
-        )
-      `,
 
-      pageSize: 1000,
+    const response =
+      await drive.files.list({
 
-      pageToken
+        /*
+         * Only PDF files inside the
+         * configured folder
+         */
 
-    });
+        q:
+          `'${folderId}' in parents
+           and mimeType = 'application/pdf'
+           and trashed = false`,
+
+        /*
+         * Fields required
+         */
+
+        fields:
+          `
+          nextPageToken,
+          files(
+            id,
+            name,
+            modifiedTime,
+            md5Checksum
+          )
+          `,
+
+        /*
+         * Maximum page size
+         */
+
+        pageSize:
+          1000,
+
+        /*
+         * Pagination
+         */
+
+        pageToken:
+
+          pageToken || undefined
+
+      });
+
 
     const driveFiles =
-      response.data.files || [];
+      response
+        .data
+        .files || [];
 
-    totalDriveFiles += driveFiles.length;
+
+    console.log(
+      `📄 Files found in this page: ${driveFiles.length}`
+    );
 
 
-    for (const file of driveFiles) {
+    totalDriveFiles +=
+      driveFiles.length;
+
+
+    /*
+     * ========================================
+     * PROCESS EACH GOOGLE DRIVE PDF
+     * ========================================
+     */
+
+    for (
+      const file of driveFiles
+    ) {
 
       /*
-       * Check whether this Drive file
-       * already exists in MongoDB
+       * Safety check
+       */
+
+      if (!file.id) {
+
+        console.log(
+          '⚠️ File without Drive ID. Skipping.'
+        );
+
+        continue;
+
+      }
+
+
+      /*
+       * ======================================
+       * CHECK EXISTING RECORD
+       * ======================================
        */
 
       const existing =
-        await DriveSyncFile.findOne({
+        await DriveSyncFile
+          .findOne({
 
-          driveFileId: file.id
+            driveFileId:
+              file.id
 
-        }).lean();
+          })
+          .lean();
 
+
+      /*
+       * ======================================
+       * EXISTING FILE
+       * ======================================
+       */
 
       if (existing) {
 
         existingFiles++;
 
+
         /*
-         * If Drive file was modified after
-         * the previous completed sync,
-         * mark it as pending again.
+         * Check whether the Drive file
+         * has been modified.
+         */
+
+        const driveModifiedTime =
+          file.modifiedTime || '';
+
+
+        const driveMd5 =
+          file.md5Checksum || '';
+
+
+        const modifiedTimeChanged =
+          existing.modifiedTime !==
+          driveModifiedTime;
+
+
+        const md5Changed =
+
+          driveMd5 &&
+
+          existing.md5Checksum &&
+
+          existing.md5Checksum !==
+            driveMd5;
+
+
+        /*
+         * ==================================
+         * FILE MODIFIED
+         * ==================================
          */
 
         if (
 
-          existing.status === 'completed' &&
+          existing.status ===
+            'completed' &&
 
-          existing.modifiedTime !==
-            (file.modifiedTime || '')
+          (
+            modifiedTimeChanged ||
+            md5Changed
+          )
 
         ) {
 
           await DriveSyncFile.updateOne(
 
             {
-              driveFileId: file.id
+              driveFileId:
+                file.id
             },
 
             {
@@ -2719,10 +2930,10 @@ async function registerAllDrivePdfFiles() {
                   file.name,
 
                 modifiedTime:
-                  file.modifiedTime || '',
+                  driveModifiedTime,
 
                 md5Checksum:
-                  file.md5Checksum || '',
+                  driveMd5,
 
                 status:
                   'pending',
@@ -2734,73 +2945,159 @@ async function registerAllDrivePdfFiles() {
                   null
 
               }
+
             }
 
           );
 
+
+          modifiedFiles++;
+
+
+          console.log('');
+
           console.log(
-            `🔄 Modified PDF → pending: ${file.name}`
+            `🔄 Modified PDF → pending`
           );
+
+          console.log(
+            `📄 ${file.name}`
+          );
+
         }
 
+
+        /*
+         * Existing pending / processing /
+         * failed / completed file
+         */
+
         continue;
+
       }
 
 
       /*
+       * ======================================
        * NEW FILE
+       * ======================================
        */
 
-      await DriveSyncFile.create({
+      try {
 
-        driveFileId:
-          file.id,
+        await DriveSyncFile.create({
 
-        fileName:
-          file.name,
+          driveFileId:
+            file.id,
 
-        modifiedTime:
-          file.modifiedTime || '',
+          fileName:
+            file.name,
 
-        md5Checksum:
-          file.md5Checksum || '',
+          modifiedTime:
+            file.modifiedTime || '',
 
-        status:
-          'pending',
+          md5Checksum:
+            file.md5Checksum || '',
 
-        error:
-          '',
+          status:
+            'pending',
 
-        attempts:
-          0,
+          error:
+            '',
 
-        lastAttemptAt:
-          null,
+          attempts:
+            0,
 
-        completedAt:
-          null
+          lastAttemptAt:
+            null,
 
-      });
+          completedAt:
+            null
+
+        });
 
 
-      newFiles++;
+        newFiles++;
 
-      console.log(
-        `➕ New PDF registered: ${file.name}`
-      );
+
+        console.log('');
+
+        console.log(
+          '➕ NEW PDF REGISTERED'
+        );
+
+        console.log(
+          `📄 ${file.name}`
+        );
+
+        console.log(
+          `🆔 ${file.id}`
+        );
+
+
+      } catch (error) {
+
+
+        /*
+         * Unique index protection
+         *
+         * Another process may have inserted
+         * the same file at the same time.
+         */
+
+        if (
+          error?.code === 11000
+        ) {
+
+          console.log(
+            `⏭️ Already registered: ${file.name}`
+          );
+
+        } else {
+
+          throw error;
+
+        }
+
+      }
+
     }
 
 
+    /*
+     * ========================================
+     * NEXT PAGE
+     * ========================================
+     */
+
     pageToken =
-      response.data.nextPageToken || null;
+      response
+        .data
+        .nextPageToken || null;
+
 
   } while (pageToken);
 
 
+  /*
+   * ==========================================
+   * FINAL REPORT
+   * ==========================================
+   */
+
   console.log('');
-  console.log('==========================================');
-  console.log('📊 DRIVE SCAN COMPLETED');
-  console.log('==========================================');
+
+  console.log(
+    '=========================================='
+  );
+
+  console.log(
+    '📊 DRIVE SCAN COMPLETED'
+  );
+
+  console.log(
+    '=========================================='
+  );
 
   console.log(
     `Google Drive PDFs : ${totalDriveFiles}`
@@ -2814,8 +3111,18 @@ async function registerAllDrivePdfFiles() {
     `New files added   : ${newFiles}`
   );
 
-  console.log('==========================================');
+  console.log(
+    `Modified files    : ${modifiedFiles}`
+  );
 
+  console.log(
+    '=========================================='
+  );
+
+
+  /*
+   * Return result
+   */
 
   return {
 
@@ -2823,7 +3130,9 @@ async function registerAllDrivePdfFiles() {
 
     existingFiles,
 
-    newFiles
+    newFiles,
+
+    modifiedFiles
 
   };
 
