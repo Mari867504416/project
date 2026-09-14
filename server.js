@@ -2764,25 +2764,15 @@ async function registerAllDrivePdfFiles() {
          * configured folder
          */
 
-        q:
-          `'${folderId}' in parents
-           and mimeType = 'application/pdf'
-           and trashed = false`,
+       q:
+  `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false',
 
         /*
          * Fields required
          */
 
         fields:
-          `
-          nextPageToken,
-          files(
-            id,
-            name,
-            modifiedTime,
-            md5Checksum
-          )
-          `,
+  'nextPageToken,files(id,name,modifiedTime,md5Checksum)',
 
         /*
          * Maximum page size
