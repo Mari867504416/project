@@ -5920,7 +5920,9 @@ async function extractTextWithOCR(
   fileName = 'document.pdf'
 ) {
 
-  console.log(`🔍 Starting OCR: ${fileName}`);
+  console.log(
+    `🔍 Starting OCR: ${fileName}`
+  );
 
   if (
     !pdfBuffer ||
@@ -5932,19 +5934,18 @@ async function extractTextWithOCR(
   }
 
   let worker = null;
+  let pdf = null;
 
   try {
 
-    /*
-     * ================================
-     * LOAD PDF
-     * ================================
-     */
+    // ==========================================
+    // LOAD PDF
+    // ==========================================
 
     const pdfData =
       new Uint8Array(pdfBuffer);
 
-    const pdf =
+    pdf =
       await pdfjsLib.getDocument({
         data: pdfData
       }).promise;
@@ -5954,26 +5955,21 @@ async function extractTextWithOCR(
     );
 
 
-    /*
-     * ================================
-     * CREATE TESSERACT WORKER
-     * ================================
-     */
+    // ==========================================
+    // CREATE TESSERACT WORKER
+    // ==========================================
 
     worker =
       await createWorker(
         'tam+eng'
       );
 
-
     let fullText = '';
 
 
-    /*
-     * ================================
-     * PROCESS PAGE BY PAGE
-     * ================================
-     */
+    // ==========================================
+    // PROCESS PAGE BY PAGE
+    // ==========================================
 
     for (
       let pageNumber = 1;
@@ -5991,21 +5987,20 @@ async function extractTextWithOCR(
 
       try {
 
-        /*
-         * Get page
-         */
+        // ========================================
+        // GET PAGE
+        // ========================================
+
         page =
           await pdf.getPage(
             pageNumber
           );
 
 
-        /*
-         * OCR resolution
-         *
-         * Start with 1.5 to reduce
-         * Render CPU / memory usage.
-         */
+        // ========================================
+        // OCR RESOLUTION
+        // ========================================
+
         const scale = 1.5;
 
         const viewport =
@@ -6014,9 +6009,10 @@ async function extractTextWithOCR(
           });
 
 
-        /*
-         * Create canvas
-         */
+        // ========================================
+        // CREATE CANVAS
+        // ========================================
+
         canvas =
           createCanvas(
             Math.ceil(
@@ -6027,14 +6023,14 @@ async function extractTextWithOCR(
             )
           );
 
-
         const context =
           canvas.getContext('2d');
 
 
-        /*
-         * Render PDF page
-         */
+        // ========================================
+        // RENDER PDF PAGE
+        // ========================================
+
         renderTask =
           page.render({
             canvasContext: context,
@@ -6045,23 +6041,31 @@ async function extractTextWithOCR(
         await renderTask.promise;
 
 
-        /*
-         * Convert to PNG
-         */
+        // ========================================
+        // IMPORTANT:
+        // DO NOT CALL renderTask.cancel()
+        // AFTER SUCCESSFUL RENDER
+        // ========================================
+
+
+        // ========================================
+        // CONVERT CANVAS TO PNG
+        // ========================================
+
         const imageBuffer =
           canvas.toBuffer(
             'image/png'
           );
 
 
-        /*
-         * OCR
-         */
+        // ========================================
+        // OCR
+        // ========================================
+
         const result =
           await worker.recognize(
             imageBuffer
           );
-
 
         const pageText =
           result?.data?.text || '';
@@ -6082,53 +6086,49 @@ async function extractTextWithOCR(
         }
 
 
-        /*
-         * ================================
-         * IMPORTANT CLEANUP
-         * ================================
-         */
+        // ========================================
+        // CLEANUP
+        // ========================================
 
         /*
-         * Destroy render task safely
+         * IMPORTANT:
+         *
+         * DO NOT call:
+         *
+         * renderTask.cancel()
+         *
+         * here.
+         *
+         * The render has already completed.
          */
-        if (renderTask) {
-
-          try {
-
-            renderTask.cancel();
-
-          } catch (_) {}
-
-        }
 
 
-        /*
-         * Release page
-         */
         if (page) {
 
           try {
 
             page.cleanup();
 
-          } catch (_) {}
+          } catch (cleanupError) {
+
+            console.log(
+              `⚠️ Page cleanup warning ${pageNumber}:`,
+              cleanupError.message
+            );
+
+          }
 
         }
 
 
-        /*
-         * Release references
-         */
+        // Release references
+
         renderTask = null;
         page = null;
         canvas = null;
 
-      } catch (pageError) {
 
-        /*
-         * One page failure should NOT
-         * terminate the entire PDF OCR.
-         */
+      } catch (pageError) {
 
         console.error(
           `⚠️ OCR page ${pageNumber} failed:`,
@@ -6136,26 +6136,26 @@ async function extractTextWithOCR(
         );
 
 
+        // ========================================
+        // FAILED PAGE CLEANUP
+        // ========================================
+
         /*
-         * Cleanup failed page
+         * DO NOT call renderTask.cancel()
+         * because that itself can trigger the
+         * CanvasElement error.
          */
-
-        if (renderTask) {
-
-          try {
-            renderTask.cancel();
-          } catch (_) {}
-
-        }
-
 
         if (page) {
 
           try {
+
             page.cleanup();
+
           } catch (_) {}
 
         }
+
 
         renderTask = null;
         page = null;
@@ -6170,45 +6170,49 @@ async function extractTextWithOCR(
       }
 
 
-      /*
-       * Small delay helps Render CPU/memory
-       * for large scanned PDFs.
-       */
+      // ========================================
+      // SMALL DELAY
+      // ========================================
 
       await new Promise(
         resolve =>
-          setTimeout(resolve, 50)
+          setTimeout(
+            resolve,
+            100
+          )
       );
+
     }
 
 
-    /*
-     * ================================
-     * CLOSE PDF
-     * ================================
-     */
+    // ==========================================
+    // CLEAN PDF
+    // ==========================================
 
-    try {
+    if (pdf) {
 
-      if (pdf) {
+      try {
+
         await pdf.cleanup();
+
+      } catch (cleanupError) {
+
+        console.log(
+          '⚠️ PDF cleanup warning:',
+          cleanupError.message
+        );
+
       }
 
-    } catch (cleanupError) {
-
-      console.log(
-        '⚠️ PDF cleanup warning:',
-        cleanupError.message
-      );
-
     }
 
 
-    /*
-     * ================================
-     * TERMINATE TESSERACT
-     * ================================
-     */
+    pdf = null;
+
+
+    // ==========================================
+    // TERMINATE TESSERACT
+    // ==========================================
 
     if (worker) {
 
@@ -6226,14 +6230,13 @@ async function extractTextWithOCR(
       }
 
       worker = null;
+
     }
 
 
-    /*
-     * ================================
-     * CLEAN OCR TEXT
-     * ================================
-     */
+    // ==========================================
+    // CLEAN OCR TEXT
+    // ==========================================
 
     const cleanedText =
       fullText
@@ -6243,11 +6246,9 @@ async function extractTextWithOCR(
         .trim();
 
 
-    /*
-     * ================================
-     * CHECK RESULT
-     * ================================
-     */
+    // ==========================================
+    // CHECK RESULT
+    // ==========================================
 
     if (!cleanedText) {
 
@@ -6256,6 +6257,7 @@ async function extractTextWithOCR(
       );
 
       return '';
+
     }
 
 
@@ -6266,6 +6268,7 @@ async function extractTextWithOCR(
 
     return cleanedText;
 
+
   } catch (error) {
 
     console.error(
@@ -6274,9 +6277,26 @@ async function extractTextWithOCR(
     );
 
 
-    /*
-     * Safe worker cleanup
-     */
+    // ==========================================
+    // SAFE PDF CLEANUP
+    // ==========================================
+
+    if (pdf) {
+
+      try {
+
+        await pdf.cleanup();
+
+      } catch (_) {}
+
+      pdf = null;
+
+    }
+
+
+    // ==========================================
+    // SAFE TESSERACT CLEANUP
+    // ==========================================
 
     if (worker) {
 
@@ -6287,12 +6307,17 @@ async function extractTextWithOCR(
       } catch (_) {}
 
       worker = null;
+
     }
 
 
     throw error;
+
   }
+
 }
+
+
 /* =========================================================
    ADMIN LOGIN
 ========================================================= */
