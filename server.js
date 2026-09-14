@@ -2358,6 +2358,20 @@ if (indexResult?.ocrRequired) {
     `📝 Manual text required: ${fileName}`
   );
 
+  await DriveSyncFile.updateOne(
+    {
+      driveFileId
+    },
+    {
+      $set: {
+        status: 'ocr_required',
+        error:
+          'PDF contains no extractable text. Manual text entry required.',
+        completedAt: null
+      }
+    }
+  );
+
   return {
     success: true,
     skipped: true,
