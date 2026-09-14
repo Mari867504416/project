@@ -8663,6 +8663,30 @@ IMPORTANT:
 
 
       /*
+       * APPEND SOURCE LINE TO ANSWER TEXT
+       * In addition to the separate `sources` array (used by the
+       * UI's source cards), the user asked for the top matching
+       * PDF + link to also appear as the last line of the answer
+       * text itself, e.g.:
+       *   Source : FORM 5.pdf
+       *   https://drive.google.com/file/d/xxxx/view
+       */
+
+      const topSource =
+        sources.length ? sources[0] : null;
+
+      const answerWithSource =
+        answer && topSource && topSource.fileName
+          ? `${answer}\n\nSource : ${topSource.fileName}` +
+            (
+              topSource.driveUrl
+                ? `\n${topSource.driveUrl}`
+                : ''
+            )
+          : answer;
+
+
+      /*
        * GEMINI RETURNED NO TEXT
        */
 
@@ -8697,7 +8721,8 @@ IMPORTANT:
         question:
           cleanQuestion,
 
-        answer,
+        answer:
+          answerWithSource,
 
         sources
 
