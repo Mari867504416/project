@@ -2630,7 +2630,7 @@ async function runDriveBatch(
   }
 }
 async function registerAllDrivePdfFiles() {
-
+ const drive = createDriveClient();
   console.log('');
   console.log('==========================================');
   console.log('📂 SCANNING GOOGLE DRIVE FOR ALL PDF FILES');
