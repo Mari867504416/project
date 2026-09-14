@@ -2756,52 +2756,30 @@ async function registerAllDrivePdfFiles() {
     );
 
 
-    const response =
-      await drive.files.list({
+   const response =
+  await drive.files.list({
 
-        /*
-         * Only PDF files inside the
-         * configured folder
-         */
+    q:
+      `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
 
-       q:
-  `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false',
+    fields:
+      'nextPageToken,files(id,name,modifiedTime,md5Checksum)',
 
-        /*
-         * Fields required
-         */
+    pageSize:
+      1000,
 
-        fields:
-  'nextPageToken,files(id,name,modifiedTime,md5Checksum)',
+    pageToken:
+      pageToken || undefined
 
-        /*
-         * Maximum page size
-         */
+  });
 
-        pageSize:
-          1000,
+const driveFiles =
+  response.data.files || [];
 
-        /*
-         * Pagination
-         */
-
-        pageToken:
-
-          pageToken || undefined
-
-      });
-
-
-    const driveFiles =
-      response
-        .data
-        .files || [];
-
-
-    console.log(
-      `📄 Files found in this page: ${driveFiles.length}`
-    );
-
+console.log(
+  '📄 Files found in this page: ' +
+  driveFiles.length
+);
 
     totalDriveFiles +=
       driveFiles.length;
