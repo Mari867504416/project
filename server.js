@@ -1597,7 +1597,7 @@ STRICT RULES:
 ========================================================= */
 
 async function indexDrivePdf(file) {
-
+const fileName = file.name;
   console.log(
     `📄 Indexing: ${file.name}`
   );
@@ -2343,21 +2343,16 @@ async function processOneDriveFile(
      * Use your existing indexDrivePdf()
      */
 
-   const indexResult =
+  const indexResult =
   await indexDrivePdf({
     id: file.data.id,
     name: file.data.name,
-    modifiedTime:
-      file.data.modifiedTime,
-    md5Checksum:
-      file.data.md5Checksum,
-    webViewLink:
-      file.data.webViewLink
+    modifiedTime: file.data.modifiedTime,
+    md5Checksum: file.data.md5Checksum,
+    webViewLink: file.data.webViewLink
   });
 
-if (
-  indexResult?.ocrRequired
-) {
+if (indexResult?.ocrRequired) {
 
   console.log(
     `📝 Manual text required: ${fileName}`
@@ -2369,7 +2364,6 @@ if (
     ocrRequired: true
   };
 }
-
 
     /*
      * Verify embeddings after indexing.
