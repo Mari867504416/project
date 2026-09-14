@@ -5297,7 +5297,32 @@ const scoredResults =
    body text, title/link only)
 ========================================================= */
 
-function searchPageCatalogue(question, limit = 8, fileIds = []) {
+/*
+ * Common connector / question words that appear in almost every
+ * Tamil or English query. Kept separate from the stopWords set in
+ * searchKeywordChunks() (that one is scoped inside that function)
+ * so this titles-only fallback doesn't treat "வேண்டும்", "பற்றி",
+ * "details" etc. as if they were meaningful search terms — a
+ * single connector-word match was matching many unrelated PDF
+ * titles and flooding the sources list.
+ */
+const PAGE_CATALOGUE_STOP_WORDS = new Set([
+
+  'எதை', 'எது', 'என்ன', 'எப்படி', 'எங்கே', 'எப்போது', 'எதற்கு',
+  'எதனால்', 'எதற்காக', 'யார்', 'யாருடைய', 'யாருக்கு', 'யாரால்',
+  'எந்த', 'எவ்வாறு', 'எவ்வளவு', 'எத்தனை', 'குறித்து', 'பற்றி',
+  'கூறுகிறது', 'கூறுக', 'விளக்குக', 'விளக்கவும்', 'விளக்கம்',
+  'சொல்லவும்', 'தெரிவிக்கவும்', 'உள்ளது', 'உள்ளன', 'ஆகும்',
+  'என்பது', 'வேண்டும்', 'தேவை', 'தேவையில்லை', 'வழங்க', 'வழங்கவும்',
+  'கோரினால்', 'குறித்த', 'ஆவணம்', 'ஆவணங்கள்',
+
+  'what', 'which', 'when', 'where', 'why', 'who', 'how', 'about',
+  'tell', 'explain', 'please', 'give', 'details', 'detail',
+  'does', 'mean', 'means', 'need', 'required', 'form'
+
+]);
+
+function searchPageCatalogue(question, limit = 3, fileIds = []) {
 
   const cleanQuestion =
     String(question || '')
@@ -5317,7 +5342,11 @@ function searchPageCatalogue(question, limit = 8, fileIds = []) {
           .replace(/[^\p{L}\p{N}\p{M}.-]/gu, '')
           .trim()
       )
-      .filter(term => term.length >= 2);
+      .filter(
+        term =>
+          term.length >= 2 &&
+          !PAGE_CATALOGUE_STOP_WORDS.has(term)
+      );
 
   if (!terms.length) {
     return [];
@@ -5327,6 +5356,19 @@ function searchPageCatalogue(question, limit = 8, fileIds = []) {
     Array.isArray(fileIds) && fileIds.length > 0
       ? new Set(fileIds)
       : null;
+
+  /*
+   * A title is only a genuine match when a real majority of the
+   * meaningful search terms appear in it — not just one incidental
+   * word — otherwise loosely related titles crowd out the actual
+   * document the question is about.
+   */
+
+  const requiredMatches =
+    Math.max(
+      1,
+      Math.ceil(terms.length * 0.6)
+    );
 
   const scored = [];
 
@@ -5348,7 +5390,7 @@ function searchPageCatalogue(question, limit = 8, fileIds = []) {
       }
     }
 
-    if (matches > 0) {
+    if (matches >= requiredMatches) {
       scored.push({ ...entry, matchedTerms: matches });
     }
   }
@@ -8363,7 +8405,7 @@ app.post(
       const catalogueMatches =
         searchPageCatalogue(
           cleanQuestion,
-          8,
+          3,
           requestedFileIds
         );
 
@@ -8604,10 +8646,20 @@ IMPORTANT:
       }
 
 
+      /*
+       * CAP FINAL SOURCE LIST
+       * relevantChunks (already ranked by hybridScore) were added
+       * to uniqueSources first, so slicing keeps the strongest,
+       * genuinely-retrieved PDFs and only lets a couple of
+       * catalogue-title fallbacks through after them.
+       */
+
+      const MAX_SOURCES = 5;
+
       const sources =
         Array.from(
           uniqueSources.values()
-        );
+        ).slice(0, MAX_SOURCES);
 
 
       /*
