@@ -2993,39 +2993,49 @@ if (
    REPAIR EMPTY GEMINI EMBEDDINGS
 ========================================================= */
 
-async function repairEmptyEmbeddings(
-  batchSize = 5
-) {
+/* =========================================================
+   REPAIR EMPTY GEMINI EMBEDDINGS
+========================================================= */
+
+async function repairEmptyEmbeddings(batchSize = 5) {
 
   console.log('');
   console.log(
     '=========================================='
   );
+
   console.log(
     `🔧 REPAIR EMPTY EMBEDDINGS: ${batchSize} CHUNKS`
   );
+
   console.log(
     '=========================================='
   );
 
+
   /*
-   * Find only chunks where embedding is empty
+   * Find only chunks with empty/missing embeddings
    */
 
   const chunks =
     await DriveChunk.find({
+
       $or: [
+
         {
           embedding: {
             $size: 0
           }
         },
+
         {
           embedding: {
             $exists: false
           }
         }
+
       ]
+
     })
     .limit(batchSize)
     .lean();
@@ -3038,10 +3048,13 @@ async function repairEmptyEmbeddings(
     );
 
     return {
+
       processed: 0,
       success: 0,
       failed: 0,
-      remaining: 0
+      remaining: 0,
+      quotaExceeded: false
+
     };
   }
 
@@ -3057,7 +3070,7 @@ async function repairEmptyEmbeddings(
 
 
   /*
-   * Process one chunk at a time
+   * Process chunks one by one
    */
 
   for (
@@ -3075,9 +3088,15 @@ async function repairEmptyEmbeddings(
       `🔢 Repair ${i + 1}/${chunks.length}`
     );
 
+
     console.log(
-      `📄 File: ${chunk.fileName || chunk.name || 'Unknown'}`
+      `📄 File: ${
+        chunk.fileName ||
+        chunk.name ||
+        'Unknown'
+      }`
     );
+
 
     console.log(
       `🆔 Chunk ID: ${chunk._id}`
@@ -3087,8 +3106,8 @@ async function repairEmptyEmbeddings(
     /*
      * Safety check
      *
-     * If embedding already exists,
-     * DO NOT overwrite it.
+     * Never overwrite an existing
+     * valid 768-dimensional embedding.
      */
 
     if (
@@ -3097,7 +3116,7 @@ async function repairEmptyEmbeddings(
     ) {
 
       console.log(
-        '⏭️ Already has valid 768 embedding. Skipping.'
+        '⏭️ Valid 768 embedding already exists. Skipping.'
       );
 
       continue;
@@ -3130,7 +3149,7 @@ async function repairEmptyEmbeddings(
 
       /*
        * =====================================
-       * GEMINI EMBEDDING
+       * USE YOUR EXISTING GEMINI FUNCTION
        * =====================================
        */
 
@@ -3139,42 +3158,18 @@ async function repairEmptyEmbeddings(
       );
 
 
-      /*
-       * IMPORTANT:
-       *
-       * Replace this block with your existing
-       * Gemini embedding call if your current
-       * function uses a different syntax.
-       *
-       * Current Gemini SDK:
-       */
-
-      const response =
-        await ai.models.embedContent({
-
-          model:
-            'gemini-embedding-001',
-
-          contents:
-            text
-
-        });
-
-
       const embedding =
-        response?.embeddings?.[0]?.values ||
-        response?.embedding?.values ||
-        [];
+        await createDocumentEmbedding(
+          text
+        );
 
 
       /*
-       * Validate dimension
+       * createDocumentEmbedding()
+       * already validates:
+       *
+       * 768 dimensions
        */
-
-      console.log(
-        `🧠 Gemini embedding dimension: ${embedding.length}`
-      );
-
 
       if (
         !Array.isArray(embedding) ||
@@ -3182,74 +3177,100 @@ async function repairEmptyEmbeddings(
       ) {
 
         throw new Error(
-          `Invalid embedding dimension: ${embedding.length}. Expected 768.`
+          `Invalid embedding dimension: ${
+            embedding?.length || 0
+          }`
         );
       }
 
 
+      console.log(
+        `✅ Embedding generated: ${embedding.length} dimensions`
+      );
+
+
       /*
        * =====================================
-       * UPDATE ONLY THIS CHUNK
+       * UPDATE ONLY EMPTY CHUNK
        * =====================================
        */
 
-      await DriveChunk.updateOne(
-        {
-          _id: chunk._id,
+      const updateResult =
+        await DriveChunk.updateOne(
 
-          /*
-           * Important:
-           * Update only if it is still empty.
-           *
-           * This prevents overwriting a valid
-           * embedding created by another process.
-           */
+          {
+            _id: chunk._id,
 
-          $or: [
-            {
-              embedding: {
-                $size: 0
+            /*
+             * IMPORTANT:
+             * Only update if still empty.
+             */
+
+            $or: [
+
+              {
+                embedding: {
+                  $size: 0
+                }
+              },
+
+              {
+                embedding: {
+                  $exists: false
+                }
               }
-            },
-            {
-              embedding: {
-                $exists: false
-              }
+
+            ]
+
+          },
+
+          {
+            $set: {
+              embedding: embedding
             }
-          ]
-        },
-        {
-          $set: {
-            embedding: embedding
           }
-        }
-      );
+
+        );
 
 
-      console.log(
-        `✅ Repaired: ${embedding.length} dimensions`
-      );
+      if (
+        updateResult.modifiedCount === 1
+      ) {
 
+        console.log(
+          '💾 MongoDB embedding updated successfully.'
+        );
 
-      success++;
+        success++;
+
+      } else {
+
+        console.log(
+          '⏭️ Chunk was already updated by another process.'
+        );
+
+      }
 
 
       /*
-       * Small delay
-       *
-       * Helps avoid hitting rate limits too quickly.
+       * Small delay to reduce rate-limit pressure
        */
 
       await new Promise(
         resolve =>
           setTimeout(
             resolve,
-            1000
+            1500
           )
       );
 
 
     } catch (error) {
+
+      const message =
+        error?.message ||
+        'Unknown Gemini error';
+
 
       /*
        * =====================================
@@ -3257,22 +3278,24 @@ async function repairEmptyEmbeddings(
        * =====================================
        */
 
-      const status =
-        error?.status ||
-        error?.code ||
-        error?.response?.status;
-
-
-      const message =
-        error?.message ||
-        'Unknown Gemini error';
-
-
       if (
-        status === 429 ||
-        message.includes('429') ||
-        message.includes('RESOURCE_EXHAUSTED') ||
-        message.includes('quota')
+
+        error?.status === 429 ||
+
+        error?.code === 429 ||
+
+        message.includes(
+          '429'
+        ) ||
+
+        message.includes(
+          'RESOURCE_EXHAUSTED'
+        ) ||
+
+        message.toLowerCase().includes(
+          'quota'
+        )
+
       ) {
 
         console.error(
@@ -3288,10 +3311,9 @@ async function repairEmptyEmbeddings(
 
         failed++;
 
+
         /*
          * STOP immediately.
-         *
-         * Do not continue wasting requests.
          */
 
         break;
@@ -3305,6 +3327,7 @@ async function repairEmptyEmbeddings(
 
       failed++;
     }
+
   }
 
 
@@ -3314,18 +3337,23 @@ async function repairEmptyEmbeddings(
 
   const remaining =
     await DriveChunk.countDocuments({
+
       $or: [
+
         {
           embedding: {
             $size: 0
           }
         },
+
         {
           embedding: {
             $exists: false
           }
         }
+
       ]
+
     });
 
 
@@ -3354,12 +3382,15 @@ async function repairEmptyEmbeddings(
     `Remaining : ${remaining}`
   );
 
+
   if (quotaExceeded) {
 
     console.log(
       '🚫 Stopped because Gemini quota was exceeded.'
     );
+
   }
+
 
   console.log(
     '=========================================='
@@ -3378,12 +3409,13 @@ async function repairEmptyEmbeddings(
     remaining,
 
     quotaExceeded
+
   };
+
 }
 /* =========================================================
    REPAIR EMPTY EMBEDDINGS
 ========================================================= */
-
 app.post(
   '/admin/repair-empty-embeddings',
   async (req, res) => {
@@ -3440,7 +3472,9 @@ app.post(
           error.message
 
       });
+
     }
+
   }
 );
 /* =========================================================
