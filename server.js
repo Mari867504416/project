@@ -194,81 +194,15 @@ mongoose.connect(
 
 });
 
-// ======================================================
-// PAGES CATALOGUE
-// ======================================================
-
-const cataloguePath = path.join(
-  __dirname,
-  'data',
-  'pages-catalogue.json'
-);
-
-let catalogue = [];
-
-try {
-
-  catalogue = JSON.parse(
-    fs.readFileSync(cataloguePath, 'utf8')
-  );
-
-  console.log(
-    `📚 Catalogue loaded: ${catalogue.length} documents`
-  );
-
-} catch (error) {
-
-  console.error(
-    '❌ Failed to load pages-catalogue.json:',
-    error.message
-  );
-
-}
-
-function searchCatalogue(query) {
-
-  const q = String(query || '')
-    .toLowerCase()
-    .trim();
-
-  if (!q) {
-    return [];
-  }
-
-  const keywords = q
-    .split(/\s+/)
-    .filter(word => word.length >= 2);
-
-  return catalogue
-    .map(item => {
-
-      const searchableText = `
-        ${item.category || ''}
-        ${item.groupLabel || ''}
-        ${item.text || ''}
-      `.toLowerCase();
-
-      let score = 0;
-
-      for (const keyword of keywords) {
-
-        if (searchableText.includes(keyword)) {
-          score++;
-        }
-
-      }
-
-      return {
-        ...item,
-        score
-      };
-
-    })
-
-    .filter(item => item.score > 0)
-
-    .sort((a, b) => b.score - a.score);
-}
+/* =========================================================
+   NOTE: page-catalogue loading + search now lives in a single
+   place — the FRONTEND PAGE CATALOGUE block above (`pageCatalogue`)
+   and `searchPageCatalogue()`. The earlier duplicate catalogue
+   loader (`catalogue`) and its `searchCatalogue()` function read
+   the same pages-catalogue.json a second time and were never
+   used for the actual /ai-search response — removed to avoid the
+   duplicate file read and duplicate search pass on every request.
+========================================================= */
 /* =========================================================
    GEMINI VECTOR CHUNK MODEL
 ========================================================= */
@@ -8301,23 +8235,6 @@ app.post(
       });
 
     }
-    // ==========================================
-    // CATALOGUE SEARCH
-    // ==========================================
-
-    const catalogueResults =
-      searchCatalogue(cleanQuestion);
-
-    console.log(
-      '📚 Catalogue matches:',
-      catalogueResults.slice(0, 10).map(x => ({
-        text: x.text,
-        category: x.category,
-        driveFileId: x.driveFileId,
-        score: x.score
-      }))
-    );
-
     /*
      * OPTIONAL CATEGORY SCOPE
      * (sent by the frontend when a category tab is open)
@@ -8389,12 +8306,45 @@ app.post(
        * frontend has one open; otherwise searches everything.
        */
 
-      const relevantChunks =
+      const hybridChunks =
         await searchHybridChunks(
           cleanQuestion,
           5,
           requestedFileIds
         );
+
+
+      /*
+       * CONFIDENCE FILTER
+       * $vectorSearch always returns its nearest neighbours,
+       * even when none of them actually match the question.
+       * Drop chunks with no keyword/legal-reference overlap AND
+       * a weak vector score, so a barely-related PDF doesn't get
+       * shown as "the" source for an unrelated question. Only
+       * applied when we have at least one solid match — if every
+       * result is weak, keep them all so we can still fall back
+       * to "no answer found" using the same data as before.
+       */
+
+      const MIN_VECTOR_SCORE = 0.72;
+
+      const hasStrongMatch =
+        hybridChunks.some(
+          item =>
+            Number(item.keywordScore || 0) > 0 ||
+            Number(item.legalScore || 0) > 0 ||
+            Number(item.vectorScore || 0) >= MIN_VECTOR_SCORE
+        );
+
+      const relevantChunks =
+        hasStrongMatch
+          ? hybridChunks.filter(
+              item =>
+                Number(item.keywordScore || 0) > 0 ||
+                Number(item.legalScore || 0) > 0 ||
+                Number(item.vectorScore || 0) >= MIN_VECTOR_SCORE
+            )
+          : hybridChunks;
 
 
       console.log(
