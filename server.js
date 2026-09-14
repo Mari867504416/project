@@ -1689,26 +1689,35 @@ if (!text || !text.trim()) {
     ocrRequired: true
   };
 }
-  } catch (ocrError) {
+ if (!text || !text.trim()) {
 
-    console.error(
-      `❌ OCR failed: ${file.name}`,
-      ocrError
-    );
+  console.log(
+    `⚠️ No text found: ${fileName}`
+  );
 
-    return {
+  await DriveSyncFile.updateOne(
+    {
+      driveFileId: file.driveFileId
+    },
+    {
+      $set: {
+        status: 'ocr_required',
+        error:
+          'PDF contains no extractable text. Manual text entry required.'
+      }
+    }
+  );
 
-      success: false,
+  console.log(
+    `📝 OCR required: ${fileName}`
+  );
 
-      reason:
-        `OCR failed: ${ocrError.message}`
-
-    };
-
-  }
-
+  return {
+    success: true,
+    skipped: true,
+    ocrRequired: true
+  };
 }
-
 
 /*
  * FINAL CHECK
@@ -2333,16 +2342,32 @@ async function processOneDriveFile(
      * Use your existing indexDrivePdf()
      */
 
-    await indexDrivePdf({
-      id: file.data.id,
-      name: file.data.name,
-      modifiedTime:
-        file.data.modifiedTime,
-      md5Checksum:
-        file.data.md5Checksum,
-      webViewLink:
-        file.data.webViewLink
-    });
+   const indexResult =
+  await indexDrivePdf({
+    id: file.data.id,
+    name: file.data.name,
+    modifiedTime:
+      file.data.modifiedTime,
+    md5Checksum:
+      file.data.md5Checksum,
+    webViewLink:
+      file.data.webViewLink
+  });
+
+if (
+  indexResult?.ocrRequired
+) {
+
+  console.log(
+    `📝 Manual text required: ${fileName}`
+  );
+
+  return {
+    success: true,
+    skipped: true,
+    ocrRequired: true
+  };
+}
 
 
     /*
