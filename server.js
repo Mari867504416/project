@@ -8294,6 +8294,69 @@ app.post(
 
 
     /*
+     * CONVERSATION HISTORY (for follow-up questions)
+     * Frontend sends the running `aiChatHistory` array so a
+     * question like "அதற்கான படிவம் என்ன?" can be understood in
+     * the context of what was just discussed. Only the last few
+     * turns are kept — enough for context, small enough to not
+     * blow up the Gemini prompt or dilute the search query.
+     */
+
+    const aiChatHistory =
+      Array.isArray(req.body?.aiChatHistory)
+        ? req.body.aiChatHistory
+            .filter(
+              item =>
+                item &&
+                typeof item === 'object'
+            )
+            .map(item => ({
+              question:
+                String(
+                  item.question ?? item.q ?? ''
+                ).trim(),
+              answer:
+                String(
+                  item.answer ?? item.a ?? ''
+                ).trim()
+            }))
+            .filter(item => item.question)
+            .slice(-4)
+        : [];
+
+    /*
+     * SEARCH QUERY
+     * Widen retrieval for follow-ups by folding the recent
+     * question(s) into the search text — a short follow-up alone
+     * ("அது எந்த ஆண்டு?") often has no keyword overlap with the
+     * right document on its own.
+     */
+
+    const searchQuery =
+      aiChatHistory.length
+        ? `${aiChatHistory.map(h => h.question).join(' ')} ${cleanQuestion}`
+            .trim()
+            .replace(/\s+/g, ' ')
+        : cleanQuestion;
+
+    /*
+     * CONVERSATION HISTORY BLOCK
+     * (fed to Gemini so it can resolve pronouns/references from
+     *  the current question back to the earlier Q&A)
+     */
+
+    const conversationHistoryBlock =
+      aiChatHistory.length
+        ? aiChatHistory
+            .map(
+              (h, i) =>
+                `Q${i + 1}: ${h.question}\nA${i + 1}: ${h.answer || '(no answer recorded)'}`
+            )
+            .join('\n\n')
+        : '';
+
+
+    /*
      * NORMALIZED SEARCH KEY
      * (scope the dedupe key by category too, so the same
      *  question in two different categories isn't treated
@@ -8350,7 +8413,7 @@ app.post(
 
       const hybridChunks =
         await searchHybridChunks(
-          cleanQuestion,
+          searchQuery,
           5,
           requestedFileIds
         );
@@ -8404,7 +8467,7 @@ app.post(
 
       const catalogueMatches =
         searchPageCatalogue(
-          cleanQuestion,
+          searchQuery,
           3,
           requestedFileIds
         );
@@ -8526,8 +8589,11 @@ ${item.driveUrl || 'Not available'}
 
    const response =
   await generateGeminiAnswer(`
-USER QUESTION
-=============
+${conversationHistoryBlock
+  ? `CONVERSATION SO FAR (most recent last)\n=======================================\n\n${conversationHistoryBlock}\n\n`
+  : ''}
+CURRENT USER QUESTION
+======================
 
 ${cleanQuestion}
 
@@ -8544,7 +8610,7 @@ ${context}
 TASK
 ====
 
-Answer the user's question using the retrieved document content above.
+Answer the CURRENT USER QUESTION using the retrieved document content above.
 
 IMPORTANT:
 
@@ -8555,6 +8621,12 @@ IMPORTANT:
 - Do NOT use outside knowledge.
 - Do NOT invent missing information.
 - Mention the relevant document name when useful.
+- If CURRENT USER QUESTION is a follow-up (e.g. it uses "அது",
+  "அதற்கு", "இது", "that", "it", or otherwise only makes sense
+  together with the CONVERSATION SO FAR), use that conversation
+  to understand what is being asked, but still answer strictly
+  from the RETRIEVED REVENUE DEPARTMENT DOCUMENTS above — do not
+  pull facts only from the earlier conversation turns.
 `);
       const answer =
         typeof response.text === 'string'
