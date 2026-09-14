@@ -357,11 +357,12 @@ const driveSyncFileSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        'pending',
-        'processing',
-        'completed',
-        'failed'
-      ],
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+  'ocr_required'
+],
       default: 'pending',
       index: true
     },
