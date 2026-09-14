@@ -2989,7 +2989,460 @@ if (
 }
 
 
+/* =========================================================
+   REPAIR EMPTY GEMINI EMBEDDINGS
+========================================================= */
 
+async function repairEmptyEmbeddings(
+  batchSize = 5
+) {
+
+  console.log('');
+  console.log(
+    '=========================================='
+  );
+  console.log(
+    `🔧 REPAIR EMPTY EMBEDDINGS: ${batchSize} CHUNKS`
+  );
+  console.log(
+    '=========================================='
+  );
+
+  /*
+   * Find only chunks where embedding is empty
+   */
+
+  const chunks =
+    await DriveChunk.find({
+      $or: [
+        {
+          embedding: {
+            $size: 0
+          }
+        },
+        {
+          embedding: {
+            $exists: false
+          }
+        }
+      ]
+    })
+    .limit(batchSize)
+    .lean();
+
+
+  if (!chunks.length) {
+
+    console.log(
+      '✅ No empty embeddings found.'
+    );
+
+    return {
+      processed: 0,
+      success: 0,
+      failed: 0,
+      remaining: 0
+    };
+  }
+
+
+  console.log(
+    `📚 Empty chunks found in this batch: ${chunks.length}`
+  );
+
+
+  let success = 0;
+  let failed = 0;
+  let quotaExceeded = false;
+
+
+  /*
+   * Process one chunk at a time
+   */
+
+  for (
+    let i = 0;
+    i < chunks.length;
+    i++
+  ) {
+
+    const chunk =
+      chunks[i];
+
+
+    console.log('');
+    console.log(
+      `🔢 Repair ${i + 1}/${chunks.length}`
+    );
+
+    console.log(
+      `📄 File: ${chunk.fileName || chunk.name || 'Unknown'}`
+    );
+
+    console.log(
+      `🆔 Chunk ID: ${chunk._id}`
+    );
+
+
+    /*
+     * Safety check
+     *
+     * If embedding already exists,
+     * DO NOT overwrite it.
+     */
+
+    if (
+      Array.isArray(chunk.embedding) &&
+      chunk.embedding.length === 768
+    ) {
+
+      console.log(
+        '⏭️ Already has valid 768 embedding. Skipping.'
+      );
+
+      continue;
+    }
+
+
+    /*
+     * Get chunk text
+     */
+
+    const text =
+      chunk.text ||
+      chunk.content ||
+      '';
+
+
+    if (!text.trim()) {
+
+      console.log(
+        '⚠️ Chunk has no text. Skipping.'
+      );
+
+      failed++;
+
+      continue;
+    }
+
+
+    try {
+
+      /*
+       * =====================================
+       * GEMINI EMBEDDING
+       * =====================================
+       */
+
+      console.log(
+        '🧠 Generating Gemini embedding...'
+      );
+
+
+      /*
+       * IMPORTANT:
+       *
+       * Replace this block with your existing
+       * Gemini embedding call if your current
+       * function uses a different syntax.
+       *
+       * Current Gemini SDK:
+       */
+
+      const response =
+        await ai.models.embedContent({
+
+          model:
+            'gemini-embedding-001',
+
+          contents:
+            text
+
+        });
+
+
+      const embedding =
+        response?.embeddings?.[0]?.values ||
+        response?.embedding?.values ||
+        [];
+
+
+      /*
+       * Validate dimension
+       */
+
+      console.log(
+        `🧠 Gemini embedding dimension: ${embedding.length}`
+      );
+
+
+      if (
+        !Array.isArray(embedding) ||
+        embedding.length !== 768
+      ) {
+
+        throw new Error(
+          `Invalid embedding dimension: ${embedding.length}. Expected 768.`
+        );
+      }
+
+
+      /*
+       * =====================================
+       * UPDATE ONLY THIS CHUNK
+       * =====================================
+       */
+
+      await DriveChunk.updateOne(
+        {
+          _id: chunk._id,
+
+          /*
+           * Important:
+           * Update only if it is still empty.
+           *
+           * This prevents overwriting a valid
+           * embedding created by another process.
+           */
+
+          $or: [
+            {
+              embedding: {
+                $size: 0
+              }
+            },
+            {
+              embedding: {
+                $exists: false
+              }
+            }
+          ]
+        },
+        {
+          $set: {
+            embedding: embedding
+          }
+        }
+      );
+
+
+      console.log(
+        `✅ Repaired: ${embedding.length} dimensions`
+      );
+
+
+      success++;
+
+
+      /*
+       * Small delay
+       *
+       * Helps avoid hitting rate limits too quickly.
+       */
+
+      await new Promise(
+        resolve =>
+          setTimeout(
+            resolve,
+            1000
+          )
+      );
+
+
+    } catch (error) {
+
+      /*
+       * =====================================
+       * GEMINI QUOTA / RATE LIMIT
+       * =====================================
+       */
+
+      const status =
+        error?.status ||
+        error?.code ||
+        error?.response?.status;
+
+
+      const message =
+        error?.message ||
+        'Unknown Gemini error';
+
+
+      if (
+        status === 429 ||
+        message.includes('429') ||
+        message.includes('RESOURCE_EXHAUSTED') ||
+        message.includes('quota')
+      ) {
+
+        console.error(
+          '🚫 Gemini quota exceeded.'
+        );
+
+        console.error(
+          message
+        );
+
+
+        quotaExceeded = true;
+
+        failed++;
+
+        /*
+         * STOP immediately.
+         *
+         * Do not continue wasting requests.
+         */
+
+        break;
+      }
+
+
+      console.error(
+        `❌ Embedding repair failed: ${message}`
+      );
+
+
+      failed++;
+    }
+  }
+
+
+  /*
+   * Count remaining empty embeddings
+   */
+
+  const remaining =
+    await DriveChunk.countDocuments({
+      $or: [
+        {
+          embedding: {
+            $size: 0
+          }
+        },
+        {
+          embedding: {
+            $exists: false
+          }
+        }
+      ]
+    });
+
+
+  console.log('');
+  console.log(
+    '=========================================='
+  );
+
+  console.log(
+    '🔧 REPAIR COMPLETE'
+  );
+
+  console.log(
+    `Processed : ${chunks.length}`
+  );
+
+  console.log(
+    `Success   : ${success}`
+  );
+
+  console.log(
+    `Failed    : ${failed}`
+  );
+
+  console.log(
+    `Remaining : ${remaining}`
+  );
+
+  if (quotaExceeded) {
+
+    console.log(
+      '🚫 Stopped because Gemini quota was exceeded.'
+    );
+  }
+
+  console.log(
+    '=========================================='
+  );
+
+
+  return {
+
+    processed:
+      chunks.length,
+
+    success,
+
+    failed,
+
+    remaining,
+
+    quotaExceeded
+  };
+}
+/* =========================================================
+   REPAIR EMPTY EMBEDDINGS
+========================================================= */
+
+app.post(
+  '/admin/repair-empty-embeddings',
+  async (req, res) => {
+
+    try {
+
+      const requestedSize =
+        Number(
+          req.body?.batchSize
+        ) || 5;
+
+
+      const batchSize =
+        Math.min(
+          Math.max(
+            requestedSize,
+            1
+          ),
+          20
+        );
+
+
+      const result =
+        await repairEmptyEmbeddings(
+          batchSize
+        );
+
+
+      res.json({
+
+        success: true,
+
+        mode:
+          'repair-empty-embeddings',
+
+        result
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        '❌ Repair empty embeddings error:',
+        error
+      );
+
+
+      res.status(500).json({
+
+        success: false,
+
+        error:
+          error.message
+
+      });
+    }
+  }
+);
 /* =========================================================
    BATCH SYNC API
 ========================================================= */
