@@ -2438,12 +2438,26 @@ async function runDriveBatch(
 
   driveSyncRunning = true;
 
-  try {
+ try {
 
-    await resetStaleProcessingFiles();
+  await resetStaleProcessingFiles();
 
 
-    const query = retryFailed
+  /*
+   * Scan Google Drive and register
+   * any new PDF files.
+   *
+   * Do this only for normal sync.
+   */
+
+  if (!retryFailed) {
+
+    await registerAllDrivePdfFiles();
+
+  }
+
+
+  const query = retryFailed
       ? {
           status: 'failed'
         }
@@ -2614,6 +2628,205 @@ async function runDriveBatch(
 
     driveSyncRunning = false;
   }
+}
+async function registerAllDrivePdfFiles() {
+
+  console.log('');
+  console.log('==========================================');
+  console.log('📂 SCANNING GOOGLE DRIVE FOR ALL PDF FILES');
+  console.log('==========================================');
+
+  let pageToken = null;
+
+  let totalDriveFiles = 0;
+  let newFiles = 0;
+  let existingFiles = 0;
+
+  do {
+
+    const response = await drive.files.list({
+
+      q: `'${process.env.GOOGLE_DRIVE_FOLDER_ID}' in parents
+          and mimeType = 'application/pdf'
+          and trashed = false`,
+
+      fields: `
+        nextPageToken,
+        files(
+          id,
+          name,
+          modifiedTime,
+          md5Checksum
+        )
+      `,
+
+      pageSize: 1000,
+
+      pageToken
+
+    });
+
+    const driveFiles =
+      response.data.files || [];
+
+    totalDriveFiles += driveFiles.length;
+
+
+    for (const file of driveFiles) {
+
+      /*
+       * Check whether this Drive file
+       * already exists in MongoDB
+       */
+
+      const existing =
+        await DriveSyncFile.findOne({
+
+          driveFileId: file.id
+
+        }).lean();
+
+
+      if (existing) {
+
+        existingFiles++;
+
+        /*
+         * If Drive file was modified after
+         * the previous completed sync,
+         * mark it as pending again.
+         */
+
+        if (
+
+          existing.status === 'completed' &&
+
+          existing.modifiedTime !==
+            (file.modifiedTime || '')
+
+        ) {
+
+          await DriveSyncFile.updateOne(
+
+            {
+              driveFileId: file.id
+            },
+
+            {
+              $set: {
+
+                fileName:
+                  file.name,
+
+                modifiedTime:
+                  file.modifiedTime || '',
+
+                md5Checksum:
+                  file.md5Checksum || '',
+
+                status:
+                  'pending',
+
+                error:
+                  '',
+
+                completedAt:
+                  null
+
+              }
+            }
+
+          );
+
+          console.log(
+            `🔄 Modified PDF → pending: ${file.name}`
+          );
+        }
+
+        continue;
+      }
+
+
+      /*
+       * NEW FILE
+       */
+
+      await DriveSyncFile.create({
+
+        driveFileId:
+          file.id,
+
+        fileName:
+          file.name,
+
+        modifiedTime:
+          file.modifiedTime || '',
+
+        md5Checksum:
+          file.md5Checksum || '',
+
+        status:
+          'pending',
+
+        error:
+          '',
+
+        attempts:
+          0,
+
+        lastAttemptAt:
+          null,
+
+        completedAt:
+          null
+
+      });
+
+
+      newFiles++;
+
+      console.log(
+        `➕ New PDF registered: ${file.name}`
+      );
+    }
+
+
+    pageToken =
+      response.data.nextPageToken || null;
+
+  } while (pageToken);
+
+
+  console.log('');
+  console.log('==========================================');
+  console.log('📊 DRIVE SCAN COMPLETED');
+  console.log('==========================================');
+
+  console.log(
+    `Google Drive PDFs : ${totalDriveFiles}`
+  );
+
+  console.log(
+    `Existing records  : ${existingFiles}`
+  );
+
+  console.log(
+    `New files added   : ${newFiles}`
+  );
+
+  console.log('==========================================');
+
+
+  return {
+
+    totalDriveFiles,
+
+    existingFiles,
+
+    newFiles
+
+  };
+
 }
 /* =========================================================
    GOOGLE DRIVE → GEMINI → MONGODB SYNC
