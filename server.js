@@ -1661,24 +1661,34 @@ if (text.trim()) {
  * try OCR for scanned/image PDFs.
  */
 
-if (!text.trim()) {
+if (!text || !text.trim()) {
 
   console.log(
-    `⚠️ No text found: ${file.name}`
+    `⚠️ No text found: ${fileName}`
+  );
+
+  await DriveSyncFile.updateOne(
+    {
+      driveFileId: file.driveFileId
+    },
+    {
+      $set: {
+        status: 'ocr_required',
+        error: 'PDF contains no extractable text. Manual text entry required.'
+      }
+    }
   );
 
   console.log(
-    `🔍 Trying OCR fallback: ${file.name}`
+    `📝 OCR required: ${fileName}`
   );
 
-  try {
-
-    text =
-      await extractTextWithOCR(
-        pdfBuffer,
-        file.name
-      );
-
+  return {
+    success: true,
+    skipped: true,
+    ocrRequired: true
+  };
+}
   } catch (ocrError) {
 
     console.error(
@@ -2450,11 +2460,11 @@ async function runDriveBatch(
    * Do this only for normal sync.
    */
 
-  if (!retryFailed) {
+/*  if (!retryFailed) {
 
     await registerAllDrivePdfFiles();
 
-  }
+  }*/
 
 
   const query = retryFailed
