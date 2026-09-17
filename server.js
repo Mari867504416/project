@@ -4016,87 +4016,34 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
     const { fileId } = req.params;
 
-    const {
-      department,
-      category,
-      goNumber,
-      goDate,
-      year
-    } = req.body;
-
-
     console.log("=================================");
     console.log("METADATA UPDATE");
     console.log("Drive File ID:", fileId);
-    console.log("Body:", req.body);
     console.log("=================================");
 
 
-    if (!fileId) {
-
-      return res.status(400).json({
-        success: false,
-        error: "Drive File ID is missing"
-      });
-
-    }
-
-
-    const result = await DriveChunk.updateMany(
-
-      {
-        driveFileId: fileId
-      },
-
-      {
-        $set: {
-
-          "metadata.department":
-            department || null,
-
-          "metadata.category":
-            category || null,
-
-          "metadata.goNumber":
-            goNumber || null,
-
-          "metadata.goDate":
-            goDate || null,
-
-          "metadata.year":
-            year
-              ? Number(year)
-              : null
-
-        }
-      }
-
-    );
+    // 1. Exact driveFileId search
+    const chunks = await DriveChunk.find({
+      driveFileId: fileId
+    })
+    .select("_id driveFileId fileName chunkIndex")
+    .limit(10)
+    .lean();
 
 
-    console.log(
-      "Matched Chunks:",
-      result.matchedCount
-    );
-
-    console.log(
-      "Modified Chunks:",
-      result.modifiedCount
-    );
+    console.log("Matching DriveChunks:", chunks);
 
 
+    // 2. Return debug information
     return res.json({
 
       success: true,
 
-      message:
-        "Metadata updated for all chunks",
+      driveFileId: fileId,
 
-      matchedChunks:
-        result.matchedCount,
+      matchedChunks: chunks.length,
 
-      modifiedChunks:
-        result.modifiedCount
+      chunks: chunks
 
     });
 
@@ -4104,7 +4051,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
   } catch (error) {
 
     console.error(
-      "Metadata update error:",
+      "Metadata debug error:",
       error
     );
 
@@ -4113,9 +4060,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
       success: false,
 
-      error:
-        error.message ||
-        "Metadata update failed"
+      error: error.message
 
     });
 
