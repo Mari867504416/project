@@ -246,6 +246,21 @@ const driveChunkSchema =
           message:
             'Embedding must contain exactly 768 numbers.'
         }
+      },
+
+      /*
+       * Extracted from the file name at indexing time (see
+       * extractMetadata() below) so faster, indexed equality
+       * filters (department/category/year) become possible
+       * without touching the existing driveFileId-based scoping
+       * anywhere else in this file.
+       */
+      metadata: {
+        department: { type: String, default: null },
+        category: { type: String, default: null },
+        goNumber: { type: String, default: null },
+        goDate: { type: String, default: null },
+        year: { type: Number, default: null }
       }
     },
     {
@@ -253,12 +268,122 @@ const driveChunkSchema =
     }
   );
 
+driveChunkSchema.index({ 'metadata.category': 1 });
+driveChunkSchema.index({ 'metadata.department': 1 });
+
 const DriveChunk =
   mongoose.models.DriveChunk ||
   mongoose.model(
     'DriveChunk',
     driveChunkSchema
   );
+
+
+/* =========================================================
+   METADATA EXTRACTION (from file name)
+
+   Populates the metadata.* fields above at chunk-creation
+   time. Same extraction rules as the standalone one-off
+   migration script for backfilling existing chunks — see
+   migrate-metadata.js.
+========================================================= */
+
+function extractMetadata(fileName) {
+
+  const metadata = {
+    department: null,
+    category: null,
+    goNumber: null,
+    goDate: null,
+    year: null
+  };
+
+  const name = fileName || '';
+
+  let match = name.match(
+    /G\.?\s*O\.?\s*(?:\(?Ms\)?\.?)?\s*(?:No\.?)?\s*(\d+)/i
+  );
+
+  if (match) {
+    metadata.goNumber = match[1];
+  }
+
+  match = name.match(
+    /\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b/
+  );
+
+  if (match) {
+
+    const day = match[1].padStart(2, '0');
+    const month = match[2].padStart(2, '0');
+    const year = match[3];
+
+    metadata.goDate = `${day}.${month}.${year}`;
+    metadata.year = Number(year);
+  }
+
+  if (!metadata.year) {
+
+    match = name.match(/\b(19|20)\d{2}\b/);
+
+    if (match) {
+      metadata.year = Number(match[0]);
+    }
+  }
+
+  const departments = [
+    'Revenue',
+    'Home',
+    'Finance',
+    'Transport',
+    'Education',
+    'Health',
+    'Social Welfare',
+    'Rural Development',
+    'Municipal Administration',
+    'Industries',
+    'Labour',
+    'Agriculture'
+  ];
+
+  for (const dept of departments) {
+
+    if (name.toLowerCase().includes(dept.toLowerCase())) {
+      metadata.department = dept;
+      break;
+    }
+  }
+
+  if (/OAP|Old Age Pension/i.test(name)) {
+    metadata.category = 'OAP';
+  }
+
+  else if (/Pension/i.test(name)) {
+    metadata.category = 'Pension';
+  }
+
+  else if (/Land|Patta|Assignment/i.test(name)) {
+    metadata.category = 'Land';
+  }
+
+  else if (/Explosive|Explosives/i.test(name)) {
+    metadata.category = 'Explosives';
+  }
+
+  else if (/Petroleum/i.test(name)) {
+    metadata.category = 'Petroleum';
+  }
+
+  else if (/Establishment|Estt/i.test(name)) {
+    metadata.category = 'Establishment';
+  }
+
+  else if (/Pensioner|Retirement/i.test(name)) {
+    metadata.category = 'Pension';
+  }
+
+  return metadata;
+}
 
 /* =========================================================
    DRIVE SYNC STATUS
@@ -1797,7 +1922,10 @@ console.log(
           chunks[i],
 
         embedding:
-          embedding
+          embedding,
+
+        metadata:
+          extractMetadata(file.name)
 
       });
 
@@ -4172,6 +4300,9 @@ app.post(
           text: chunks[i],
 
           embedding: embedding,
+
+          metadata:
+            extractMetadata(syncFile.fileName),
 
           modifiedTime:
             syncFile.modifiedTime,
