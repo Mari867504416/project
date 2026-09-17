@@ -4016,26 +4016,132 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
     const { fileId } = req.params;
 
+    const {
+      fileName,
+      department,
+      category,
+      goNumber,
+      goDate,
+      year
+    } = req.body;
+
+
     console.log("=================================");
-    console.log("SEARCHING DRIVE CHUNKS");
-    console.log("Received ID:", fileId);
+    console.log("METADATA UPDATE");
+    console.log("Received Drive File ID:", fileId);
+    console.log("File Name:", fileName);
     console.log("=================================");
 
 
-    // Show latest 20 DriveChunk records
-    const chunks = await DriveChunk.find({})
-      .select("_id driveFileId fileName chunkIndex")
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .lean();
+    // First: search using driveFileId
+    let filter = {
+      driveFileId: fileId
+    };
+
+
+    let existingChunk =
+      await DriveChunk.findOne(filter)
+        .select("_id driveFileId fileName")
+        .lean();
+
+
+    // If Drive ID is not found, search by fileName
+    if (!existingChunk && fileName) {
+
+      console.log(
+        "Drive ID not found. Searching by filename..."
+      );
+
+      existingChunk =
+        await DriveChunk.findOne({
+          fileName: fileName
+        })
+        .select("_id driveFileId fileName")
+        .lean();
+
+
+      if (existingChunk) {
+
+        console.log(
+          "Found by filename."
+        );
+
+        console.log(
+          "Actual Drive File ID:",
+          existingChunk.driveFileId
+        );
+
+        filter = {
+          driveFileId:
+            existingChunk.driveFileId
+        };
+
+      }
+
+    }
+
+
+    // Still not found
+    if (!existingChunk) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        error:
+          "PDF not found in DriveChunk collection",
+
+        receivedDriveFileId:
+          fileId,
+
+        fileName:
+          fileName || null
+
+      });
+
+    }
+
+
+    // Update ALL chunks belonging to this PDF
+    const result =
+      await DriveChunk.updateMany(
+
+        filter,
+
+        {
+          $set: {
+
+            "metadata.department":
+              department || null,
+
+            "metadata.category":
+              category || null,
+
+            "metadata.goNumber":
+              goNumber || null,
+
+            "metadata.goDate":
+              goDate || null,
+
+            "metadata.year":
+              year
+                ? Number(year)
+                : null
+
+          }
+        }
+
+      );
 
 
     console.log(
-      "Latest DriveChunks:"
+      "Matched Chunks:",
+      result.matchedCount
     );
 
     console.log(
-      JSON.stringify(chunks, null, 2)
+      "Modified Chunks:",
+      result.modifiedCount
     );
 
 
@@ -4043,9 +4149,17 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
       success: true,
 
-      receivedDriveFileId: fileId,
+      message:
+        "Metadata updated successfully",
 
-      latestChunks: chunks
+      matchedChunks:
+        result.matchedCount,
+
+      modifiedChunks:
+        result.modifiedCount,
+
+      actualDriveFileId:
+        existingChunk.driveFileId
 
     });
 
@@ -4053,15 +4167,18 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
   } catch (error) {
 
     console.error(
-      "Debug error:",
+      "Metadata update error:",
       error
     );
+
 
     return res.status(500).json({
 
       success: false,
 
-      error: error.message
+      error:
+        error.message ||
+        "Metadata update failed"
 
     });
 
