@@ -4833,6 +4833,116 @@ app.post(
 );
 
 
+/*
+ * MANUAL METADATA EDIT
+ * Lets an admin correct/fill metadata (department, category,
+ * goNumber, goDate, year) for every chunk of one file — needed
+ * because extractMetadata() only recognises English filename
+ * patterns, so Tamil-named files usually come out with
+ * metadata all null and need a manual fix.
+ */
+
+app.post(
+  '/admin/drive-sync/update-metadata',
+  async (req, res) => {
+
+    const suppliedSecret =
+      req.headers['x-sync-secret'];
+
+    if (
+      !process.env.DRIVE_SYNC_SECRET ||
+      suppliedSecret !== process.env.DRIVE_SYNC_SECRET
+    ) {
+
+      return res.status(403).json({
+        error: 'Unauthorized.'
+      });
+    }
+
+    try {
+
+      const {
+        driveFileId,
+        department,
+        category,
+        goNumber,
+        goDate,
+        year
+      } = req.body || {};
+
+      if (!driveFileId) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'driveFileId is required.'
+        });
+      }
+
+      const parsedYear =
+        year !== undefined && year !== null && year !== ''
+          ? Number(year)
+          : null;
+
+      if (parsedYear !== null && Number.isNaN(parsedYear)) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'year must be a number.'
+        });
+      }
+
+      const result =
+        await DriveChunk.updateMany(
+          { driveFileId },
+          {
+            $set: {
+              'metadata.department': department || null,
+              'metadata.category': category || null,
+              'metadata.goNumber': goNumber || null,
+              'metadata.goDate': goDate || null,
+              'metadata.year': parsedYear
+            }
+          }
+        );
+
+      if (!result.matchedCount) {
+
+        return res.status(404).json({
+          success: false,
+          error: 'No chunks found for this driveFileId.'
+        });
+      }
+
+      res.json({
+
+        success: true,
+
+        message: 'Metadata updated for all chunks of this file.',
+
+        matchedChunks:
+          result.matchedCount,
+
+        modifiedChunks:
+          result.modifiedCount
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Update metadata error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: 'Metadata update failed.'
+      });
+    }
+  }
+);
+
+
 /* =========================================================
    PHASE 2 - KEYWORD SEARCH
 ========================================================= */
