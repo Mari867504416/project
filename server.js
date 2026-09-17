@@ -4009,7 +4009,6 @@ async function repairEmptyEmbeddings(batchSize = 5) {
   };
 
 }
-
 app.put("/api/files/:fileId/metadata", async (req, res) => {
 
   try {
@@ -4017,6 +4016,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     const { fileId } = req.params;
 
     const {
+      fileName,
       department,
       category,
       goNumber,
@@ -4028,6 +4028,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     console.log("=================================");
     console.log("METADATA UPDATE");
     console.log("Drive File ID:", fileId);
+    console.log("File Name:", fileName);
     console.log("Body:", req.body);
     console.log("=================================");
 
@@ -4042,36 +4043,168 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     }
 
 
-    const result = await DriveChunk.updateMany(
+    /* =====================================================
+       1. FIND DRIVE SYNC FILE
 
-      {
+       Metadata is stored here even when the PDF has
+       not yet been indexed into DriveChunk.
+    ===================================================== */
+
+    let syncFile =
+      await DriveSyncFile.findOne({
         driveFileId: fileId
-      },
+      });
 
-      {
-        $set: {
 
-          "metadata.department":
-            department || null,
+    /* =====================================================
+       2. FALLBACK SEARCH BY FILE NAME
 
-          "metadata.category":
-            category || null,
+       Useful if the Drive ID from frontend and database
+       are different but the file name is the same.
+    ===================================================== */
 
-          "metadata.goNumber":
-            goNumber || null,
+    if (!syncFile && fileName) {
 
-          "metadata.goDate":
-            goDate || null,
+      console.log(
+        "Drive ID not found in DriveSyncFile."
+      );
 
-          "metadata.year":
-            year
-              ? Number(year)
-              : null
+      console.log(
+        "Searching by file name..."
+      );
 
-        }
+
+      syncFile =
+        await DriveSyncFile.findOne({
+          fileName: fileName
+        });
+
+
+      if (syncFile) {
+
+        console.log(
+          "Found DriveSyncFile by file name."
+        );
+
+        console.log(
+          "Actual Drive File ID:",
+          syncFile.driveFileId
+        );
+
       }
 
+    }
+
+
+    /* =====================================================
+       3. IF FILE DOES NOT EXIST IN DRIVESYNCFILE
+    ===================================================== */
+
+    if (!syncFile) {
+
+      return res.status(404).json({
+
+        success: false,
+
+        error:
+          "PDF not found in DriveSyncFile collection",
+
+        receivedDriveFileId:
+          fileId,
+
+        fileName:
+          fileName || null
+
+      });
+
+    }
+
+
+    /* =====================================================
+       4. PREPARE MANUAL METADATA
+    ===================================================== */
+
+    const metadata = {
+
+      department:
+        department || null,
+
+      category:
+        category || null,
+
+      goNumber:
+        goNumber || null,
+
+      goDate:
+        goDate || null,
+
+      year:
+        year
+          ? Number(year)
+          : null
+
+    };
+
+
+    /* =====================================================
+       5. SAVE METADATA IN DRIVESYNCFILE
+
+       This is the important part.
+
+       It allows metadata to be saved even when
+       DriveChunk does not exist yet.
+    ===================================================== */
+
+    syncFile.metadata = metadata;
+
+    await syncFile.save();
+
+
+    console.log(
+      "Metadata saved in DriveSyncFile."
     );
+
+
+    /* =====================================================
+       6. UPDATE EXISTING DRIVE CHUNKS
+
+       If PDF is already indexed, update ALL chunks.
+    ===================================================== */
+
+    const actualDriveFileId =
+      syncFile.driveFileId;
+
+
+    const result =
+      await DriveChunk.updateMany(
+
+        {
+          driveFileId:
+            actualDriveFileId
+        },
+
+        {
+          $set: {
+
+            "metadata.department":
+              metadata.department,
+
+            "metadata.category":
+              metadata.category,
+
+            "metadata.goNumber":
+              metadata.goNumber,
+
+            "metadata.goDate":
+              metadata.goDate,
+
+            "metadata.year":
+              metadata.year
+
+          }
+        }
+
+      );
 
 
     console.log(
@@ -4085,18 +4218,28 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     );
 
 
+    /* =====================================================
+       7. RESPONSE
+    ===================================================== */
+
     return res.json({
 
       success: true,
 
       message:
-        "Metadata updated for all chunks",
+        "Metadata saved successfully",
 
       matchedChunks:
         result.matchedCount,
 
       modifiedChunks:
-        result.modifiedCount
+        result.modifiedCount,
+
+      actualDriveFileId:
+        actualDriveFileId,
+
+      metadata:
+        metadata
 
     });
 
