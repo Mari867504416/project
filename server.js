@@ -4017,7 +4017,6 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     const { fileId } = req.params;
 
     const {
-      fileName,
       department,
       category,
       goNumber,
@@ -4028,110 +4027,51 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
     console.log("=================================");
     console.log("METADATA UPDATE");
-    console.log("Received Drive File ID:", fileId);
-    console.log("File Name:", fileName);
+    console.log("Drive File ID:", fileId);
+    console.log("Body:", req.body);
     console.log("=================================");
 
 
-    // First: search using driveFileId
-    let filter = {
-      driveFileId: fileId
-    };
+    if (!fileId) {
 
-
-    let existingChunk =
-      await DriveChunk.findOne(filter)
-        .select("_id driveFileId fileName")
-        .lean();
-
-
-    // If Drive ID is not found, search by fileName
-    if (!existingChunk && fileName) {
-
-      console.log(
-        "Drive ID not found. Searching by filename..."
-      );
-
-      existingChunk =
-        await DriveChunk.findOne({
-          fileName: fileName
-        })
-        .select("_id driveFileId fileName")
-        .lean();
-
-
-      if (existingChunk) {
-
-        console.log(
-          "Found by filename."
-        );
-
-        console.log(
-          "Actual Drive File ID:",
-          existingChunk.driveFileId
-        );
-
-        filter = {
-          driveFileId:
-            existingChunk.driveFileId
-        };
-
-      }
-
-    }
-
-
-    // Still not found
-    if (!existingChunk) {
-
-      return res.status(404).json({
-
+      return res.status(400).json({
         success: false,
-
-        error:
-          "PDF not found in DriveChunk collection",
-
-        receivedDriveFileId:
-          fileId,
-
-        fileName:
-          fileName || null
-
+        error: "Drive File ID is missing"
       });
 
     }
 
 
-    // Update ALL chunks belonging to this PDF
-    const result =
-      await DriveChunk.updateMany(
+    const result = await DriveChunk.updateMany(
 
-        filter,
+      {
+        driveFileId: fileId
+      },
 
-        {
-          $set: {
+      {
+        $set: {
 
-            "metadata.department":
-              department || null,
+          "metadata.department":
+            department || null,
 
-            "metadata.category":
-              category || null,
+          "metadata.category":
+            category || null,
 
-            "metadata.goNumber":
-              goNumber || null,
+          "metadata.goNumber":
+            goNumber || null,
 
-            "metadata.goDate":
-              goDate || null,
+          "metadata.goDate":
+            goDate || null,
 
-            "metadata.year":
-              year
-                ? Number(year)
-                : null
+          "metadata.year":
+            year
+              ? Number(year)
+              : null
 
-          }
         }
+      }
 
-      );
+    );
 
 
     console.log(
@@ -4150,16 +4090,13 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
       success: true,
 
       message:
-        "Metadata updated successfully",
+        "Metadata updated for all chunks",
 
       matchedChunks:
         result.matchedCount,
 
       modifiedChunks:
-        result.modifiedCount,
-
-      actualDriveFileId:
-        existingChunk.driveFileId
+        result.modifiedCount
 
     });
 
