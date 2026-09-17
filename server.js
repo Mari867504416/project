@@ -9376,6 +9376,90 @@ app.use(
 );
 
 
+
+app.put("/api/files/:fileId/metadata", async (req, res) => {
+
+    try {
+
+        const { fileId } = req.params;
+
+        const {
+            department,
+            category,
+            goNumber,
+            goDate,
+            year
+        } = req.body;
+
+
+        const result =
+            await Chunk.updateMany(
+
+                { fileId: fileId },
+
+                {
+                    $set: {
+
+                        "metadata.department":
+                            department || null,
+
+                        "metadata.category":
+                            category || null,
+
+                        "metadata.goNumber":
+                            goNumber || null,
+
+                        "metadata.goDate":
+                            goDate || null,
+
+                        "metadata.year":
+                            year
+                            ? Number(year)
+                            : null
+
+                    }
+                }
+
+            );
+
+
+        res.json({
+
+            success: true,
+
+            message:
+                "Metadata updated for all chunks",
+
+            matchedChunks:
+                result.matchedCount,
+
+            modifiedChunks:
+                result.modifiedCount
+
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "Metadata update error:",
+            error
+        );
+
+
+        res.status(500).json({
+
+            success: false,
+
+            error:
+                "Metadata update failed"
+
+        });
+
+    }
+
+});
+
 /* =========================================================
    SERVER
 ========================================================= */
