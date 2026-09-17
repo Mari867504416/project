@@ -4840,24 +4840,15 @@ app.post(
  * because extractMetadata() only recognises English filename
  * patterns, so Tamil-named files usually come out with
  * metadata all null and need a manual fix.
+ *
+ * No x-sync-secret check here (unlike register-catalogue /
+ * sync-drive) — this is meant to be called directly from the
+ * admin panel's browser UI, same as /admin/drive-sync/manual-text.
  */
 
 app.post(
   '/admin/drive-sync/update-metadata',
   async (req, res) => {
-
-    const suppliedSecret =
-      req.headers['x-sync-secret'];
-
-    if (
-      !process.env.DRIVE_SYNC_SECRET ||
-      suppliedSecret !== process.env.DRIVE_SYNC_SECRET
-    ) {
-
-      return res.status(403).json({
-        error: 'Unauthorized.'
-      });
-    }
 
     try {
 
@@ -4937,6 +4928,108 @@ app.post(
       res.status(500).json({
         success: false,
         error: 'Metadata update failed.'
+      });
+    }
+  }
+);
+
+
+/*
+ * LIST FILES FOR THE METADATA EDITOR
+ * Returns one row per distinct file (grouped from DriveChunk,
+ * not just the ocr_required subset), with its current metadata
+ * so the admin panel can show what's already filled in and what
+ * still needs fixing. Supports an optional ?search= filter and
+ * pagination, since a Drive folder can hold hundreds of PDFs.
+ */
+
+app.get(
+  '/admin/drive-sync/files',
+  async (req, res) => {
+
+    try {
+
+      const search =
+        String(req.query.search || '').trim();
+
+      const page =
+        Math.max(1, Number(req.query.page) || 1);
+
+      const limit =
+        Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+
+      const matchStage =
+        search
+          ? { fileName: { $regex: search, $options: 'i' } }
+          : {};
+
+      const groupStage = {
+        $group: {
+          _id: '$driveFileId',
+          fileName: { $first: '$fileName' },
+          driveUrl: { $first: '$driveUrl' },
+          metadata: { $first: '$metadata' },
+          chunkCount: { $sum: 1 }
+        }
+      };
+
+      const totalResult =
+        await DriveChunk.aggregate([
+          { $match: matchStage },
+          groupStage,
+          { $count: 'total' }
+        ]);
+
+      const total =
+        totalResult[0]?.total || 0;
+
+      const rows =
+        await DriveChunk.aggregate([
+          { $match: matchStage },
+          groupStage,
+          { $sort: { fileName: 1 } },
+          { $skip: (page - 1) * limit },
+          { $limit: limit }
+        ]);
+
+      const files =
+        rows.map(row => ({
+          driveFileId: row._id,
+          fileName: row.fileName,
+          driveUrl: row.driveUrl,
+          chunkCount: row.chunkCount,
+          metadata: row.metadata || {
+            department: null,
+            category: null,
+            goNumber: null,
+            goDate: null,
+            year: null
+          }
+        }));
+
+      res.json({
+
+        success: true,
+
+        total,
+        page,
+        limit,
+        count: files.length,
+
+        files
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        'List files for metadata error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error: error.message
       });
     }
   }
