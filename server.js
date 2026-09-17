@@ -4012,106 +4012,114 @@ async function repairEmptyEmbeddings(batchSize = 5) {
 
 app.put("/api/files/:fileId/metadata", async (req, res) => {
 
-    try {
+  try {
 
-        const { fileId } = req.params;
+    const { fileId } = req.params;
 
-        const {
-            department,
-            category,
-            goNumber,
-            goDate,
-            year
-        } = req.body;
-
-        console.log("=================================");
-        console.log("METADATA UPDATE");
-        console.log("File ID:", fileId);
-        console.log("Body:", req.body);
-        console.log("=================================");
+    const {
+      department,
+      category,
+      goNumber,
+      goDate,
+      year
+    } = req.body;
 
 
-        if (!fileId) {
-
-            return res.status(400).json({
-                success: false,
-                error: "File ID is missing"
-            });
-
-        }
+    console.log("=================================");
+    console.log("METADATA UPDATE");
+    console.log("File ID:", fileId);
+    console.log("Body:", req.body);
+    console.log("=================================");
 
 
-        const result = await Chunk.updateMany(
+    if (!fileId) {
 
-            {
-                fileId: fileId
-            },
-
-            {
-                $set: {
-
-                    "metadata.department":
-                        department || null,
-
-                    "metadata.category":
-                        category || null,
-
-                    "metadata.goNumber":
-                        goNumber || null,
-
-                    "metadata.goDate":
-                        goDate || null,
-
-                    "metadata.year":
-                        year
-                            ? Number(year)
-                            : null
-
-                }
-            }
-
-        );
-
-
-        console.log("Matched:", result.matchedCount);
-        console.log("Modified:", result.modifiedCount);
-
-
-        return res.json({
-
-            success: true,
-
-            message:
-                "Metadata updated for all chunks",
-
-            matchedChunks:
-                result.matchedCount,
-
-            modifiedChunks:
-                result.modifiedCount
-
-        });
-
-
-    } catch (error) {
-
-        console.error(
-            "Metadata update error:",
-            error
-        );
-
-
-        return res.status(500).json({
-
-            success: false,
-
-            error:
-                error.message ||
-                "Metadata update failed"
-
-        });
+      return res.status(400).json({
+        success: false,
+        error: "File ID is missing"
+      });
 
     }
+
+
+    const result = await DriveChunk.updateMany(
+
+      {
+        fileId: fileId
+      },
+
+      {
+        $set: {
+
+          "metadata.department":
+            department || null,
+
+          "metadata.category":
+            category || null,
+
+          "metadata.goNumber":
+            goNumber || null,
+
+          "metadata.goDate":
+            goDate || null,
+
+          "metadata.year":
+            year
+              ? Number(year)
+              : null
+
+        }
+      }
+
+    );
+
+
+    console.log(
+      "Matched Chunks:",
+      result.matchedCount
+    );
+
+    console.log(
+      "Modified Chunks:",
+      result.modifiedCount
+    );
+
+
+    return res.json({
+
+      success: true,
+
+      message:
+        "Metadata updated for all chunks",
+
+      matchedChunks:
+        result.matchedCount,
+
+      modifiedChunks:
+        result.modifiedCount
+
+    });
+
+
+  } catch (error) {
+
+    console.error(
+      "Metadata update error:",
+      error
+    );
+
+
+    return res.status(500).json({
+
+      success: false,
+
+      error:
+        error.message ||
+        "Metadata update failed"
+
+    });
+
+  }
 
 });
 /* =========================================================
