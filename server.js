@@ -4027,7 +4027,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
     console.log("=================================");
     console.log("METADATA UPDATE");
-    console.log("File ID:", fileId);
+    console.log("Drive File ID:", fileId);
     console.log("Body:", req.body);
     console.log("=================================");
 
@@ -4036,7 +4036,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
       return res.status(400).json({
         success: false,
-        error: "File ID is missing"
+        error: "Drive File ID is missing"
       });
 
     }
@@ -4045,7 +4045,7 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     const result = await DriveChunk.updateMany(
 
       {
-        fileId: fileId
+        driveFileId: fileId
       },
 
       {
