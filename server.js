@@ -4941,6 +4941,14 @@ app.post(
  * so the admin panel can show what's already filled in and what
  * still needs fixing. Supports an optional ?search= filter and
  * pagination, since a Drive folder can hold hundreds of PDFs.
+ *
+ * Projects away `embedding` (768 numbers per chunk) and `text`
+ * right after $match, before the $group — without this, the
+ * aggregation drags every chunk's full embedding array through
+ * the pipeline just to read a few small fields, which gets slow
+ * fast as the collection grows. Count + page are computed in a
+ * single $facet pass instead of two separate aggregate() calls,
+ * so the collection is only scanned once per request.
  */
 
 app.get(
@@ -4963,34 +4971,50 @@ app.get(
           ? { fileName: { $regex: search, $options: 'i' } }
           : {};
 
-      const groupStage = {
-        $group: {
-          _id: '$driveFileId',
-          fileName: { $first: '$fileName' },
-          driveUrl: { $first: '$driveUrl' },
-          metadata: { $first: '$metadata' },
-          chunkCount: { $sum: 1 }
-        }
-      };
-
-      const totalResult =
+      const [facetResult] =
         await DriveChunk.aggregate([
+
           { $match: matchStage },
-          groupStage,
-          { $count: 'total' }
-        ]);
+
+          // Drop the heavy fields before grouping.
+          {
+            $project: {
+              driveFileId: 1,
+              fileName: 1,
+              driveUrl: 1,
+              metadata: 1
+            }
+          },
+
+          {
+            $group: {
+              _id: '$driveFileId',
+              fileName: { $first: '$fileName' },
+              driveUrl: { $first: '$driveUrl' },
+              metadata: { $first: '$metadata' },
+              chunkCount: { $sum: 1 }
+            }
+          },
+
+          { $sort: { fileName: 1 } },
+
+          {
+            $facet: {
+              total: [{ $count: 'count' }],
+              rows: [
+                { $skip: (page - 1) * limit },
+                { $limit: limit }
+              ]
+            }
+          }
+
+        ], { allowDiskUse: true });
 
       const total =
-        totalResult[0]?.total || 0;
+        facetResult?.total?.[0]?.count || 0;
 
       const rows =
-        await DriveChunk.aggregate([
-          { $match: matchStage },
-          groupStage,
-          { $sort: { fileName: 1 } },
-          { $skip: (page - 1) * limit },
-          { $limit: limit }
-        ]);
+        facetResult?.rows || [];
 
       const files =
         rows.map(row => ({
@@ -5026,6 +5050,7 @@ app.get(
         'List files for metadata error:',
         error
       );
+
 
       res.status(500).json({
         success: false,
