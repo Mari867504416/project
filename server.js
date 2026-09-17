@@ -4017,33 +4017,35 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
     const { fileId } = req.params;
 
     console.log("=================================");
-    console.log("METADATA UPDATE");
-    console.log("Drive File ID:", fileId);
+    console.log("SEARCHING DRIVE CHUNKS");
+    console.log("Received ID:", fileId);
     console.log("=================================");
 
 
-    // 1. Exact driveFileId search
-    const chunks = await DriveChunk.find({
-      driveFileId: fileId
-    })
-    .select("_id driveFileId fileName chunkIndex")
-    .limit(10)
-    .lean();
+    // Show latest 20 DriveChunk records
+    const chunks = await DriveChunk.find({})
+      .select("_id driveFileId fileName chunkIndex")
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
 
 
-    console.log("Matching DriveChunks:", chunks);
+    console.log(
+      "Latest DriveChunks:"
+    );
+
+    console.log(
+      JSON.stringify(chunks, null, 2)
+    );
 
 
-    // 2. Return debug information
     return res.json({
 
       success: true,
 
-      driveFileId: fileId,
+      receivedDriveFileId: fileId,
 
-      matchedChunks: chunks.length,
-
-      chunks: chunks
+      latestChunks: chunks
 
     });
 
@@ -4051,10 +4053,9 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
   } catch (error) {
 
     console.error(
-      "Metadata debug error:",
+      "Debug error:",
       error
     );
-
 
     return res.status(500).json({
 
