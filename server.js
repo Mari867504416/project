@@ -444,6 +444,20 @@ const driveSyncFileSchema = new mongoose.Schema(
     completedAt: {
       type: Date,
       default: null
+    },
+
+    /*
+     * Manually entered metadata (saved via admin panel).
+     * Stored here so it survives even before the PDF is
+     * indexed into DriveChunk, and is applied to chunks
+     * when the PDF is indexed later.
+     */
+    metadata: {
+      department: { type: String, default: null },
+      category:   { type: String, default: null },
+      goNumber:   { type: String, default: null },
+      goDate:     { type: String, default: null },
+      year:       { type: Number, default: null }
     }
   },
   {
@@ -1862,6 +1876,62 @@ console.log(
     const newChunks = [];
 
 
+    /* =====================================================
+       RESOLVE CHUNK METADATA
+
+       Priority (highest wins):
+         1. Manually saved metadata in DriveSyncFile
+         2. Auto-extracted metadata from file name
+
+       This ensures that metadata entered via the admin
+       panel before indexing is applied to every chunk,
+       and is not silently discarded.
+    ===================================================== */
+
+    const autoMetadata =
+      extractMetadata(file.name);
+
+    const savedSyncFile =
+      await DriveSyncFile.findOne({
+        driveFileId: file.id
+      }).lean();
+
+    const savedMeta =
+      savedSyncFile?.metadata || {};
+
+    const chunkMetadata = {
+      department:
+        savedMeta.department != null
+          ? savedMeta.department
+          : autoMetadata.department,
+
+      category:
+        savedMeta.category != null
+          ? savedMeta.category
+          : autoMetadata.category,
+
+      goNumber:
+        savedMeta.goNumber != null
+          ? savedMeta.goNumber
+          : autoMetadata.goNumber,
+
+      goDate:
+        savedMeta.goDate != null
+          ? savedMeta.goDate
+          : autoMetadata.goDate,
+
+      year:
+        savedMeta.year != null
+          ? savedMeta.year
+          : autoMetadata.year
+    };
+
+    console.log(
+      `🏷️ Chunk metadata for ${file.name}:`,
+      chunkMetadata
+    );
+
+
     for (
       let i = 0;
       i < chunks.length;
@@ -1924,8 +1994,14 @@ console.log(
         embedding:
           embedding,
 
+        /*
+         * Merge metadata: filename-based auto-extraction
+         * is overridden by any manually saved values in
+         * DriveSyncFile (set via the admin panel before
+         * or after indexing).
+         */
         metadata:
-          extractMetadata(file.name)
+          chunkMetadata
 
       });
 
