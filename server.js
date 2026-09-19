@@ -4653,6 +4653,17 @@ app.post(
           `✅ Embedding ${i + 1}: ${embedding.length} dimensions`
         );
 
+        // Merge: saved manual metadata overrides auto-extracted metadata
+        const autoMeta = extractMetadata(syncFile.fileName);
+        const savedMeta = syncFile.metadata || {};
+        const resolvedMeta = {
+          department: savedMeta.department != null ? savedMeta.department : autoMeta.department,
+          category:   savedMeta.category   != null ? savedMeta.category   : autoMeta.category,
+          goNumber:   savedMeta.goNumber   != null ? savedMeta.goNumber   : autoMeta.goNumber,
+          goDate:     savedMeta.goDate     != null ? savedMeta.goDate     : autoMeta.goDate,
+          year:       savedMeta.year       != null ? savedMeta.year       : autoMeta.year
+        };
+
         newChunks.push({
           driveFileId: syncFile.driveFileId,
 
@@ -4664,8 +4675,7 @@ app.post(
 
           embedding: embedding,
 
-          metadata:
-            extractMetadata(syncFile.fileName),
+          metadata: resolvedMeta,
 
           modifiedTime:
             syncFile.modifiedTime,
