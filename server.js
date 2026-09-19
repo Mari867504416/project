@@ -420,7 +420,8 @@ const driveSyncFileSchema = new mongoose.Schema(
   'processing',
   'completed',
   'failed',
-  'ocr_required'
+  'ocr_required',
+  'skipped'
 ],
       default: 'pending',
       index: true
@@ -995,7 +996,7 @@ function getGoogleDriveClient() {
 
       scopes: [
 
-        'https://www.googleapis.com/auth/drive.readonly'
+        'https://www.googleapis.com/auth/drive'
 
       ]
 
@@ -2645,6 +2646,7 @@ async function runDriveBatch(
         }
       : {
           status: 'pending'
+          // 'skipped' files are intentionally excluded
         };
 
 
@@ -2854,7 +2856,7 @@ async function registerAllDrivePdfFiles() {
           .replace(/\\n/g, '\n'),
 
       scopes: [
-        'https://www.googleapis.com/auth/drive.readonly'
+        'https://www.googleapis.com/auth/drive'
       ]
 
     });
@@ -4372,6 +4374,187 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
   }
 
 });
+/* =========================================================
+   SKIP FILE  (mark as skipped — exclude from batch runs)
+========================================================= */
+app.post(
+  '/api/files/:fileId/skip',
+  async (req, res) => {
+
+    try {
+
+      const { fileId } = req.params;
+
+      if (!fileId) {
+        return res.status(400).json({
+          success: false,
+          error: 'fileId is required.'
+        });
+      }
+
+      const syncFile =
+        await DriveSyncFile.findOne({
+          driveFileId: fileId
+        });
+
+      if (!syncFile) {
+        return res.status(404).json({
+          success: false,
+          error: 'File not found in DriveSyncFile.'
+        });
+      }
+
+      syncFile.status = 'skipped';
+      syncFile.error  = 'Manually skipped by admin.';
+      await syncFile.save();
+
+      console.log(
+        `⏭️ File skipped: ${syncFile.fileName}`
+      );
+
+      return res.json({
+        success: true,
+        message: 'File marked as skipped.',
+        fileName: syncFile.fileName
+      });
+
+    } catch (error) {
+
+      console.error('Skip file error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: error.message || 'Skip failed.'
+      });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   DELETE FILE FROM DRIVE + MONGODB
+   Requires drive (read+write) scope on service account.
+========================================================= */
+app.delete(
+  '/api/files/:fileId',
+  async (req, res) => {
+
+    try {
+
+      const { fileId } = req.params;
+
+      if (!fileId) {
+        return res.status(400).json({
+          success: false,
+          error: 'fileId is required.'
+        });
+      }
+
+      /* ── 1. Find the DriveSyncFile record ── */
+
+      const syncFile =
+        await DriveSyncFile.findOne({
+          driveFileId: fileId
+        });
+
+      if (!syncFile) {
+        return res.status(404).json({
+          success: false,
+          error: 'File not found in DriveSyncFile.'
+        });
+      }
+
+      const fileName = syncFile.fileName;
+
+
+      /* ── 2. Delete from Google Drive ── */
+
+      let driveDeleted = false;
+      let driveError   = null;
+
+      try {
+
+        const drive = getGoogleDriveClient();
+
+        await drive.files.delete({
+          fileId
+        });
+
+        driveDeleted = true;
+
+        console.log(
+          `🗑️ Deleted from Drive: ${fileName}`
+        );
+
+      } catch (driveErr) {
+
+        /*
+         * 403 = service account lacks write scope.
+         * 404 = file already removed from Drive.
+         * In both cases we still clean up MongoDB.
+         */
+        driveError = driveErr.message || String(driveErr);
+
+        console.warn(
+          `⚠️ Drive delete failed (${driveErr?.code || '?'}): ${driveError}`
+        );
+
+      }
+
+
+      /* ── 3. Delete DriveChunk records ── */
+
+      const chunkResult =
+        await DriveChunk.deleteMany({
+          driveFileId: fileId
+        });
+
+      console.log(
+        `🗑️ Chunks removed: ${chunkResult.deletedCount}`
+      );
+
+
+      /* ── 4. Delete DriveSyncFile record ── */
+
+      await DriveSyncFile.deleteOne({
+        driveFileId: fileId
+      });
+
+      console.log(
+        `🗑️ DriveSyncFile removed: ${fileName}`
+      );
+
+
+      /* ── 5. Response ── */
+
+      return res.json({
+        success: true,
+        message: driveDeleted
+          ? `"${fileName}" deleted from Drive and database.`
+          : `"${fileName}" removed from database. Drive deletion failed: ${driveError}`,
+        driveDeleted,
+        driveError,
+        chunksRemoved: chunkResult.deletedCount
+      });
+
+
+    } catch (error) {
+
+      console.error('Delete file error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: error.message || 'Delete failed.'
+      });
+
+    }
+
+  }
+);
+
+
 /* =========================================================
    REPAIR EMPTY EMBEDDINGS
 ========================================================= */
