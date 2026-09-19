@@ -4229,9 +4229,32 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
 
        It allows metadata to be saved even when
        DriveChunk does not exist yet.
+
+       If the file is currently in ocr_required or failed
+       status, reset it to pending so the next batch run
+       will re-index it and pick up the saved metadata.
     ===================================================== */
 
     syncFile.metadata = metadata;
+
+    /*
+     * Reset to pending if the file hasn't been
+     * successfully indexed yet — this ensures the
+     * saved metadata is applied to chunks as soon as
+     * the next batch or retry runs.
+     */
+    if (
+      syncFile.status === 'ocr_required' ||
+      syncFile.status === 'failed' ||
+      syncFile.status === 'pending'
+    ) {
+      syncFile.status = 'pending';
+      syncFile.error  = '';
+
+      console.log(
+        "Status reset to 'pending' so next batch will index with saved metadata."
+      );
+    }
 
     await syncFile.save();
 
@@ -4298,18 +4321,26 @@ app.put("/api/files/:fileId/metadata", async (req, res) => {
        7. RESPONSE
     ===================================================== */
 
+    const notYetIndexed =
+      result.matchedCount === 0;
+
     return res.json({
 
       success: true,
 
       message:
-        "Metadata saved successfully",
+        notYetIndexed
+          ? "Metadata saved. PDF will be indexed in the next batch run."
+          : "Metadata saved successfully",
 
       matchedChunks:
         result.matchedCount,
 
       modifiedChunks:
         result.modifiedCount,
+
+      notYetIndexed:
+        notYetIndexed,
 
       actualDriveFileId:
         actualDriveFileId,
