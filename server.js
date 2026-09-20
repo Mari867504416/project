@@ -4478,20 +4478,36 @@ app.delete(
 
         const drive = getGoogleDriveClient();
 
-        await drive.files.delete({
-          fileId
+        /*
+         * drive.files.delete() requires the service account
+         * to be the file owner — which is rarely the case.
+         *
+         * drive.files.update() with trashed:true only needs
+         * "Writer" permission on the file or its parent folder,
+         * which the service account has when the shared Drive
+         * folder grants it Editor role.
+         *
+         * To grant access (one-time):
+         *   Google Drive → folder → Share
+         *   → add service account email → Editor
+         */
+        await drive.files.update({
+          fileId,
+          requestBody: { trashed: true }
         });
 
         driveDeleted = true;
 
         console.log(
-          `🗑️ Deleted from Drive: ${fileName}`
+          `🗑️ Trashed in Drive: ${fileName}`
         );
 
       } catch (driveErr) {
 
         /*
-         * 403 = service account lacks write scope.
+         * 403 = service account lacks write permission on folder.
+         *       Fix: share the Drive folder with the service
+         *       account email as Editor in Google Drive.
          * 404 = file already removed from Drive.
          * In both cases we still clean up MongoDB.
          */
@@ -4532,8 +4548,8 @@ app.delete(
       return res.json({
         success: true,
         message: driveDeleted
-          ? `"${fileName}" deleted from Drive and database.`
-          : `"${fileName}" removed from database. Drive deletion failed: ${driveError}`,
+          ? `"${fileName}" moved to Drive Trash and removed from database.`
+          : `"${fileName}" removed from database. Drive trash failed: ${driveError}`,
         driveDeleted,
         driveError,
         chunksRemoved: chunkResult.deletedCount
